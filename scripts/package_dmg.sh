@@ -95,12 +95,66 @@ echo "==> Wrote $ZIP_PATH"
 
 # 8. Build the DMG.
 DMG_PATH="$DIST/$APP_NAME.dmg"
-DMG_STAGING="$DIST/dmg-staging"
-mkdir -p "$DMG_STAGING"
-cp -R "$APP_DIR" "$DMG_STAGING/"
-ln -s /Applications "$DMG_STAGING/Applications"
-hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH" >/dev/null
-rm -rf "$DMG_STAGING"
+TEMP_DMG="$DIST/temp.dmg"
+
+echo "==> Creating temporary writable DMG..."
+hdiutil create -size 100m -fs HFS+ -volname "$APP_NAME" -ov "$TEMP_DMG" >/dev/null
+
+echo "==> Mounting temporary DMG..."
+ATTACH_INFO=$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG")
+MOUNT_POINT=$(echo "$ATTACH_INFO" | grep -o '/Volumes/.*')
+
+echo "==> Copying files to DMG..."
+cp -R "$APP_DIR" "$MOUNT_POINT/"
+ln -s /Applications "$MOUNT_POINT/Applications"
+
+# Set up background image
+mkdir -p "$MOUNT_POINT/.background"
+if [ -f "$ROOT/scripts/dmg_background.png" ]; then
+  cp "$ROOT/scripts/dmg_background.png" "$MOUNT_POINT/.background/dmg_background.png"
+fi
+
+sleep 3
+
+echo "==> Styling DMG window via AppleScript..."
+if osascript <<APPLESCRIPT
+tell application "Finder"
+    tell disk "$APP_NAME"
+        open
+        delay 2
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        -- Set window bounds: left=100, top=100, right=700, bottom=500 (gives 600x400 content area)
+        set the bounds of container window to {100, 100, 700, 500}
+        set theViewOptions to the icon view options of container window
+        set icon size of theViewOptions to 110
+        set arrangement of theViewOptions to not arranged
+        set background picture of theViewOptions to POSIX file "/Volumes/$APP_NAME/.background/dmg_background.png"
+        
+        -- Center items over the background placeholders (app icon on the left, Applications folder on the right)
+        set position of item "$APP_NAME.app" to {150, 205}
+        set position of item "Applications" to {450, 205}
+        
+        update without registering applications
+        delay 2
+        close
+    end tell
+end tell
+APPLESCRIPT
+then
+  echo "==> DMG styled successfully."
+else
+  echo "==> WARNING: Failed to style DMG with AppleScript (is Finder or GUI session available?). Proceeding with basic layout."
+fi
+
+# Wait for changes to write
+sleep 2
+
+echo "==> Finalizing and compressing DMG..."
+hdiutil detach "$MOUNT_POINT"
+hdiutil convert "$TEMP_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" -ov >/dev/null
+rm -f "$TEMP_DMG"
 echo "==> Wrote $DMG_PATH"
 
 # 9. Optional notarization.
