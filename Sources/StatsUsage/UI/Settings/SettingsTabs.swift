@@ -7,20 +7,47 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            Picker("Language", selection: languageBinding) {
-                Text("English").tag(AppLanguage.en)
-                Text("简体中文").tag(AppLanguage.zhHans)
+            Section {
+                Picker(selection: languageBinding) {
+                    Text("English").tag(AppLanguage.en)
+                    Text("简体中文").tag(AppLanguage.zhHans)
+                } label: {
+                    SettingRowLabel(icon: "globe", color: .blue,
+                                    title: "Language",
+                                    subtitle: "Interface display language")
+                }
+            } header: {
+                Text("Appearance")
             }
-            Toggle("Launch at login", isOn: launchAtLoginBinding)
-            Picker("Resource mode", selection: resourceModeBinding) {
-                Text("Responsive (3 min)").tag(ResourceMode.responsive)
-                Text("Balanced (5 min)").tag(ResourceMode.balanced)
-                Text("Relaxed (10 min)").tag(ResourceMode.relaxed)
-                Text("Low power (15 min)").tag(ResourceMode.lowPower)
+
+            Section {
+                Toggle(isOn: launchAtLoginBinding) {
+                    SettingRowLabel(icon: "power", color: .green,
+                                    title: "Launch at login",
+                                    subtitle: "Start StatsUsage automatically when you sign in")
+                }
+            } header: {
+                Text("Startup")
+            }
+
+            Section {
+                Picker(selection: resourceModeBinding) {
+                    Text("Responsive — 3 min").tag(ResourceMode.responsive)
+                    Text("Balanced — 5 min").tag(ResourceMode.balanced)
+                    Text("Relaxed — 10 min").tag(ResourceMode.relaxed)
+                    Text("Low power — 15 min").tag(ResourceMode.lowPower)
+                } label: {
+                    SettingRowLabel(icon: "bolt.fill", color: .orange,
+                                    title: "Resource mode",
+                                    subtitle: "How often providers are refreshed")
+                }
+            } header: {
+                Text("Performance")
+            } footer: {
+                Text("Longer intervals reduce battery, CPU, and network usage.")
             }
         }
         .formStyle(.grouped)
-        .padding()
         .navigationTitle("General")
     }
 
@@ -44,25 +71,45 @@ struct MenuBarSettingsView: View {
 
     var body: some View {
         Form {
-            Picker("Status-bar provider", selection: statusProviderBinding) {
-                Text("Auto").tag(String?.none)
-                ForEach(viewModel.config.providers) { provider in
-                    Text(provider.name).tag(String?.some(provider.id))
+            Section {
+                Picker(selection: statusProviderBinding) {
+                    Text("Auto").tag(String?.none)
+                    ForEach(viewModel.config.providers) { provider in
+                        Text(provider.name).tag(String?.some(provider.id))
+                    }
+                } label: {
+                    SettingRowLabel(icon: "chart.bar.fill", color: .indigo,
+                                    title: "Status-bar provider",
+                                    subtitle: "Which provider drives the menu-bar readout")
                 }
+            } header: {
+                Text("Content")
             }
-            Picker("Widget style", selection: widgetStyleBinding) {
-                ForEach(MenuBarWidgetStyle.allCases, id: \.self) { style in
-                    Text(style.title).tag(style)
+
+            Section {
+                Picker(selection: widgetStyleBinding) {
+                    ForEach(MenuBarWidgetStyle.allCases, id: \.self) { style in
+                        Text(style.title).tag(style)
+                    }
+                } label: {
+                    SettingRowLabel(icon: "textformat", color: .teal,
+                                    title: "Widget style",
+                                    subtitle: "How the value is rendered in the menu bar")
                 }
-            }
-            Picker("Appearance", selection: appearanceBinding) {
-                Text("Follow wallpaper").tag(StatusBarAppearanceMode.followWallpaper)
-                Text("Dark").tag(StatusBarAppearanceMode.dark)
-                Text("Light").tag(StatusBarAppearanceMode.light)
+                Picker(selection: appearanceBinding) {
+                    Text("Follow wallpaper").tag(StatusBarAppearanceMode.followWallpaper)
+                    Text("Dark").tag(StatusBarAppearanceMode.dark)
+                    Text("Light").tag(StatusBarAppearanceMode.light)
+                } label: {
+                    SettingRowLabel(icon: "circle.lefthalf.filled", color: .gray,
+                                    title: "Appearance",
+                                    subtitle: "Tint of the menu-bar widget")
+                }
+            } header: {
+                Text("Appearance")
             }
         }
         .formStyle(.grouped)
-        .padding()
         .navigationTitle("Menu Bar")
     }
 
@@ -87,22 +134,40 @@ struct NotchSettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("Show notch hub", isOn: enabledBinding)
-            Picker("Collapsed provider", selection: providerBinding) {
-                Text("First available").tag(String?.none)
-                ForEach(viewModel.config.providers) { provider in
-                    Text(provider.name).tag(String?.some(provider.id))
+            Section {
+                Toggle(isOn: enabledBinding) {
+                    SettingRowLabel(icon: "rectangle.topthird.inset.filled", color: .pink,
+                                    title: "Show notch hub",
+                                    subtitle: "A live usage island that hugs the notch")
                 }
+            } footer: {
+                Text("The hub sits at the top-center of the screen, hugging the notch on Macs that have one. Hover to expand into a live usage panel; click to open Settings.")
             }
-            .disabled(!viewModel.config.notchEnabled)
-            Toggle("Expand on hover", isOn: expandBinding)
+
+            Section {
+                Picker(selection: providerBinding) {
+                    Text("First available").tag(String?.none)
+                    ForEach(viewModel.config.providers) { provider in
+                        Text(provider.name).tag(String?.some(provider.id))
+                    }
+                } label: {
+                    SettingRowLabel(icon: "star.fill", color: .yellow,
+                                    title: "Collapsed provider",
+                                    subtitle: "Shown on the notch when not expanded")
+                }
                 .disabled(!viewModel.config.notchEnabled)
-            Text("The hub floats at the top-center of the screen, hugging the notch on Macs that have one. Hover to expand into a live usage panel; click to open Settings.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+                Toggle(isOn: expandBinding) {
+                    SettingRowLabel(icon: "arrow.down.left.and.arrow.up.right", color: .purple,
+                                    title: "Expand on hover",
+                                    subtitle: "Reveal the full panel when you hover")
+                }
+                .disabled(!viewModel.config.notchEnabled)
+            } header: {
+                Text("Behavior")
+            }
         }
         .formStyle(.grouped)
-        .padding()
         .navigationTitle("Notch")
     }
 
@@ -126,33 +191,49 @@ struct ProvidersSettingsView: View {
     @State private var configuringProviderID: String?
 
     var body: some View {
-        List {
-            ForEach(viewModel.config.providers) { provider in
-                HStack {
-                    Toggle(isOn: enabledBinding(provider.id)) {
-                        VStack(alignment: .leading) {
+        Form {
+            Section {
+                ForEach(viewModel.config.providers) { provider in
+                    HStack(spacing: 11) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                (provider.enabled ? Color.accentColor : Color.gray).gradient,
+                                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            )
+
+                        VStack(alignment: .leading, spacing: 1) {
                             Text(provider.name)
-                            Text(provider.type.rawValue)
-                                .font(.caption2)
+                            Text(provider.type.rawValue.capitalized + " · every \(provider.pollIntervalSec / 60) min")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+
+                        Spacer()
+
+                        Button {
+                            configuringProviderID = provider.id
+                        } label: {
+                            Image(systemName: "slider.horizontal.3")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Configure settings and credentials")
+
+                        Toggle("", isOn: enabledBinding(provider.id))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
                     }
-                    Spacer()
-                    Text("\(provider.pollIntervalSec / 60) min")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    
-                    Button {
-                        configuringProviderID = provider.id
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .foregroundStyle(.tint)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Configure settings and credentials")
+                    .padding(.vertical, 2)
                 }
+            } header: {
+                Text("Providers")
+            } footer: {
+                Text("Toggle a provider on or off, or open its configuration to set credentials, poll interval, and alert thresholds.")
             }
         }
+        .formStyle(.grouped)
         .navigationTitle("Providers")
         .sheet(item: Binding(
             get: { configuringProviderID.map { IdentifiableString(id: $0) } },
@@ -318,19 +399,49 @@ struct ConfigureProviderSheet: View {
     }
 }
 
-/// About tab: version + update check.
+/// About tab: app identity, version, and links.
 struct AboutSettingsView: View {
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
+            Spacer()
+
             Image(systemName: "gauge.with.dots.needle.67percent")
-                .font(.system(size: 48))
+                .font(.system(size: 56))
                 .foregroundStyle(.tint)
-            Text("StatsUsage").font(.title2.bold())
-            Text("Version \(AppVersion.current)").foregroundStyle(.secondary)
+                .padding(20)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            VStack(spacing: 4) {
+                Text("StatsUsage").font(.title.bold())
+                Text("Version \(AppVersion.current)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
             Text("A menu-bar console for AI subscription usage.")
-                .font(.caption)
+                .font(.callout)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: 320)
+
+            HStack(spacing: 10) {
+                Link(destination: URL(string: "https://github.com/Raghaverma/UsageStats")!) {
+                    Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                Link(destination: URL(string: "https://github.com/Raghaverma/UsageStats/issues")!) {
+                    Label("Report an issue", systemImage: "exclamationmark.bubble")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .padding(.top, 4)
+
+            Spacer()
+
+            Text("© 2026 StatsUsage · MIT License")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.bottom, 8)
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)

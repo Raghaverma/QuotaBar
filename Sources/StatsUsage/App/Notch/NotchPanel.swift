@@ -1,13 +1,14 @@
 import AppKit
 
-/// A borderless, non-activating panel that floats above everything (including the
-/// menu bar) on all Spaces — the host for the notch hub. Uses public AppKit APIs
-/// only (no private SkyLight/CGSSpace), so it stays App Store-safe.
+/// A borderless panel that floats above everything (including the menu bar) on all
+/// Spaces — the host for the notch hub. It is sized to exactly fit the island, so the
+/// window only ever covers the visible hub and never blocks clicks elsewhere. Uses
+/// public AppKit APIs only (no private SkyLight/CGSSpace), so it stays App Store-safe.
 final class NotchPanel: NSPanel {
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -19,13 +20,13 @@ final class NotchPanel: NSPanel {
         hasShadow = false
         hidesOnDeactivate = false
         isMovable = false
-        // Pass clicks through to other apps by default. The controller flips this to
-        // `false` only while the cursor is actually over the island, so the large
-        // transparent panel never creates a dead zone over the desktop/other windows.
-        ignoresMouseEvents = true
+        // The panel is sized to the island, so it never covers anything else — clicks
+        // outside it reach the apps beneath naturally, no passthrough tricks needed.
+        ignoresMouseEvents = false
     }
 
-    // A borderless panel must opt in to receiving mouse/key without stealing focus.
-    override var canBecomeKey: Bool { false }
+    // Borderless windows are non-key by default; opt in so the SwiftUI buttons and tap
+    // gesture inside the hub receive clicks and fire.
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }

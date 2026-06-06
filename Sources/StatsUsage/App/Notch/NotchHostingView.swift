@@ -1,25 +1,25 @@
 import AppKit
 import SwiftUI
 
-/// Shared, main-actor state that lets the SwiftUI hub report the live frame of the
-/// visible island so the hosting view can pass mouse events through everywhere else.
-///
-/// Without this, the notch panel's `NSHostingView` claims hit-testing across its
-/// entire (large) frame, creating a dead zone near the notch where the user cannot
-/// click anything underneath. A `@MainActor` class is implicitly `Sendable`, so it is
-/// safe to capture from SwiftUI's `@Sendable` preference-change closure.
+/// Bridges the SwiftUI hub's measured size up to the controller, which resizes the
+/// panel to fit exactly. Sizing the window to the island (rather than a large fixed
+/// footprint) means there is never a transparent dead zone over other apps — clicks
+/// outside the island land on whatever is beneath, with no mouse-passthrough tricks.
+/// A `@MainActor` class is implicitly `Sendable`, so it is safe to capture from
+/// SwiftUI's `@Sendable` preference-change closure.
 @MainActor
-final class NotchHitState {
-    /// Interactive island frame, in the hub's top-left-origin coordinate space.
-    /// `.zero` means "nothing interactive" (everything passes through).
-    var islandFrame: CGRect = .zero
+final class NotchLayoutBridge {
+    var onSizeChange: ((CGSize) -> Void)?
+
+    func report(_ size: CGSize) {
+        onSizeChange?(size)
+    }
 }
 
-/// Hosting view for the notch hub that only intercepts mouse events within the
-/// currently visible island; all other points fall through to the windows below.
+/// Hosting view for the notch hub. `acceptsFirstMouse` lets a click register on the
+/// very first press even when the panel was not yet key, so the SwiftUI buttons and
+/// tap gesture inside the hub fire immediately instead of just focusing the window.
 final class NotchHostingView: NSHostingView<NotchHubView> {
-    var hitState: NotchHitState?
-
     required init(rootView: NotchHubView) {
         super.init(rootView: rootView)
     }
@@ -29,15 +29,5 @@ final class NotchHostingView: NSHostingView<NotchHubView> {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let hitState else { return super.hitTest(point) }
-
-        // `point` is in the superview's coordinate system; bring it into ours.
-        let local = convert(point, from: superview)
-        // AppKit is bottom-left origin; SwiftUI frames are top-left origin.
-        let topLeft = CGPoint(x: local.x, y: bounds.height - local.y)
-
-        guard hitState.islandFrame.contains(topLeft) else { return nil }
-        return super.hitTest(point)
-    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

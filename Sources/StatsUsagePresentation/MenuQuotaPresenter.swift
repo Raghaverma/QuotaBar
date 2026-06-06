@@ -21,6 +21,23 @@ public enum MenuQuotaPresenter {
         return "resets in \(minutes)m"
     }
 
+    /// A live, second-accurate countdown for views that tick every second, e.g.
+    /// "2d 3h", "3h 12m", "12m 04s", "45s". Returns `nil` when there is no reset clock.
+    /// Designed to be re-evaluated continuously (drive it from a `TimelineView`).
+    public static func liveResetCountdown(_ window: UsageQuotaWindow, now: Date = Date()) -> String? {
+        guard let resetAt = window.resetAt else { return nil }
+        let remaining = Int(resetAt.timeIntervalSince(now).rounded(.down))
+        if remaining <= 0 { return "now" }
+        let days = remaining / 86_400
+        let hours = (remaining % 86_400) / 3_600
+        let minutes = (remaining % 3_600) / 60
+        let seconds = remaining % 60
+        if days > 0 { return "\(days)d \(hours)h" }
+        if hours > 0 { return "\(hours)h \(String(format: "%02d", minutes))m" }
+        if minutes > 0 { return "\(minutes)m \(String(format: "%02d", seconds))s" }
+        return "\(seconds)s"
+    }
+
     /// A short trust label derived from confidence + freshness.
     public static func confidenceLabel(_ window: UsageQuotaWindow, freshness: ValueFreshness) -> String {
         if freshness == .cachedFallback { return "cached" }

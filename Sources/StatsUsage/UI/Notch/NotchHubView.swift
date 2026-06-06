@@ -8,11 +8,9 @@ struct NotchHubView: View {
     @Bindable var viewModel: AppViewModel
     let geometry: NotchGeometry
     var onOpenSettings: () -> Void
-    var hitState: NotchHitState
+    var layout: NotchLayoutBridge
 
     @State private var isExpanded = false
-
-    private static let coordinateSpace = "notchHubRoot"
 
     /// Bottom-corner radius of the physical notch; the collapsed island matches it so
     /// the painted ears read as a seamless continuation of the bezel.
@@ -25,23 +23,18 @@ struct NotchHubView: View {
     private var collapsedHeight: CGFloat { geometry.notchHeight }
 
     var body: some View {
-        VStack(spacing: 0) {
-            island
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: IslandFramePreferenceKey.self,
-                            value: proxy.frame(in: .named(Self.coordinateSpace))
-                        )
-                    }
-                )
-            Spacer(minLength: 0).allowsHitTesting(false)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .coordinateSpace(name: Self.coordinateSpace)
-        .onPreferenceChange(IslandFramePreferenceKey.self) { frame in
-            Task { @MainActor in hitState.islandFrame = frame }
-        }
+        // The island measures its own intrinsic size and reports it up so the panel
+        // can shrink to fit. No outer fill/frame — the window is exactly the island.
+        island
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: IslandSizePreferenceKey.self, value: proxy.size)
+                }
+            )
+            .onPreferenceChange(IslandSizePreferenceKey.self) { size in
+                let measured = size
+                Task { @MainActor in layout.report(measured) }
+            }
     }
 
     private var island: some View {
@@ -54,61 +47,17 @@ struct NotchHubView: View {
             }
         }
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
-        .background(islandBackground(radius: radius))
-        .overlay {
-            // Only draw a visible edge once expanded — collapsed, the island must be
-            // an invisible black extension of the notch with no floating-box outline.
-            if isExpanded {
-                NotchShape(bottomRadius: radius)
-                    .stroke(
-                        LinearGradient(
-                            colors: [
-                                .white.opacity(0.18),
-                                .white.opacity(0.04),
-                                .purple.opacity(0.10),
-                                .blue.opacity(0.10)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1.0
-                    )
-            }
-        }
-        .shadow(color: .black.opacity(isExpanded ? 0.45 : 0), radius: 18, y: 10)
+        .background(NotchShape(bottomRadius: radius).fill(Color.black))
         .contentShape(NotchShape(bottomRadius: radius))
         .onHover { hovering in
             guard viewModel.config.notchExpandOnHover else { return }
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+            // Critically damped (no overshoot) so the island settles cleanly instead of
+            // bouncing — especially noticeable on collapse.
+            withAnimation(.smooth(duration: 0.3)) {
                 isExpanded = hovering
             }
         }
         .onTapGesture { onOpenSettings() }
-    }
-
-    /// Opaque black so the island merges with the physical notch's housing rather than
-    /// floating as a translucent box. A faint top sheen and a darkened material layer
-    /// add depth only on the expanded drop-down panel.
-    private func islandBackground(radius: CGFloat) -> some View {
-        NotchShape(bottomRadius: radius)
-            .fill(Color.black)
-            .overlay {
-                if isExpanded {
-                    NotchShape(bottomRadius: radius)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.55)
-                        .overlay(
-                            NotchShape(bottomRadius: radius)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [.white.opacity(0.07), .clear],
-                                        startPoint: .top,
-                                        endPoint: .center
-                                    )
-                                )
-                        )
-                }
-            }
     }
 
     // MARK: Collapsed
@@ -127,11 +76,22 @@ struct NotchHubView: View {
             }
             Spacer(minLength: geometry.notchWidth)   // reserve the camera gap
             ear(alignment: .trailing) {
-                if let countdown = primaryCountdown {
-                    Text(countdown)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(1)
+                if let window = primaryWindow, window.resetAt != nil {
+                    // A live, per-second ticking countdown so the time-to-reset is
+                    // always accurate between data refreshes — not frozen at render.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        HStack(spacing: 3) {
+                            Image(systemName: "timer")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.5))
+                            Text(MenuQuotaPresenter.liveResetCountdown(window, now: context.date) ?? "")
+                                .font(.system(size: 11, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.78))
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                                .lineLimit(1)
+                        }
+                    }
                 } else if let snap = primarySnapshot {
                     Text(snap.unit)
                         .font(.system(size: 11))
@@ -164,11 +124,13 @@ struct NotchHubView: View {
             }
             .padding(.top, 2)
             Divider().overlay(Color.white.opacity(0.12))
-            ForEach(rows, id: \.id) { row in
-                NotchProviderRow(snapshot: row, name: name(for: row.source))
+            // Show every enabled provider — even ones still waiting on data (e.g. a
+            // scaffolded provider) — so none silently disappear from the panel.
+            ForEach(enabledProviders) { provider in
+                NotchProviderRow(name: provider.name, snapshot: viewModel.snapshots[provider.id])
             }
-            if rows.isEmpty {
-                Text("No live providers yet")
+            if enabledProviders.isEmpty {
+                Text("No providers enabled")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.5))
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -205,8 +167,12 @@ struct NotchHubView: View {
         return rows.first
     }
 
+    private var primaryWindow: UsageQuotaWindow? {
+        primarySnapshot?.quotaWindows.first
+    }
+
     private var primaryCountdown: String? {
-        guard let window = primarySnapshot?.quotaWindows.first else { return nil }
+        guard let window = primaryWindow else { return nil }
         return MenuQuotaPresenter.resetCountdown(window)
     }
 
@@ -237,24 +203,25 @@ struct NotchHubView: View {
     }
 }
 
-/// Reports the visible island's frame (in the hub's coordinate space) up to the
-/// hosting view so it can pass mouse events through everywhere else.
-private struct IslandFramePreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+/// Reports the island's measured size up to the controller so the panel can be sized
+/// to fit it exactly (and resized as it expands/collapses).
+private struct IslandSizePreferenceKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
         value = nextValue()
     }
 }
 
 /// One provider row in the expanded hub: dot, name, ring, percent, countdown.
+/// `snapshot` is optional so providers still waiting on data remain listed.
 private struct NotchProviderRow: View {
-    let snapshot: UsageSnapshot
     let name: String
+    let snapshot: UsageSnapshot?
 
     @State private var animatedPercent: Double = 0
 
     private var percent: Double? {
-        snapshot.remainingPercent ?? snapshot.quotaWindows.first?.remainingPercent
+        snapshot?.remainingPercent ?? snapshot?.quotaWindows.first?.remainingPercent
     }
 
     var body: some View {
@@ -268,33 +235,66 @@ private struct NotchProviderRow: View {
             }
             .frame(width: 22, height: 22)
             .onAppear {
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.05)) {
+                withAnimation(.smooth(duration: 0.5).delay(0.05)) {
                     animatedPercent = percent ?? 0
                 }
             }
             .onChange(of: percent) { _, newValue in
-                withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) {
+                withAnimation(.smooth(duration: 0.5)) {
                     animatedPercent = newValue ?? 0
                 }
             }
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                if let countdown = snapshot.quotaWindows.first.flatMap({ MenuQuotaPresenter.resetCountdown($0) }) {
-                    Text(countdown).font(.system(size: 10)).foregroundStyle(.white.opacity(0.55))
-                } else if !snapshot.note.isEmpty {
-                    Text(snapshot.note).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                if !resetWindows.isEmpty {
+                    // Live, per-second countdown for each window's reset clock.
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        VStack(alignment: .leading, spacing: 1) {
+                            ForEach(resetWindows.prefix(2)) { window in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "timer")
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.4))
+                                    Text(windowLabel(window))
+                                        .foregroundStyle(.white.opacity(0.4))
+                                    Text(MenuQuotaPresenter.liveResetCountdown(window, now: context.date) ?? "")
+                                        .foregroundStyle(.white.opacity(0.7))
+                                        .monospacedDigit()
+                                        .contentTransition(.numericText())
+                                }
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                            }
+                        }
+                    }
+                } else if let subtitle = subtitleText {
+                    Text(subtitle).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 }
             }
             Spacer()
             Text(percent.map { "\(Int($0.rounded()))%" } ?? "—")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(percent == nil ? .white.opacity(0.4) : .white)
         }
     }
 
+    /// Subtitle when there are no reset windows: the snapshot's note, or a waiting hint.
+    private var subtitleText: String? {
+        guard let snapshot else { return "Waiting for data…" }
+        return snapshot.note.isEmpty ? nil : snapshot.note
+    }
+
+    /// Windows that carry a real reset clock, in display order.
+    private var resetWindows: [UsageQuotaWindow] {
+        snapshot?.quotaWindows.filter { $0.resetAt != nil } ?? []
+    }
+
+    private func windowLabel(_ window: UsageQuotaWindow) -> String {
+        window.title.isEmpty ? "resets" : window.title
+    }
+
     private var ringColor: Color {
-        guard snapshot.status == .ok, let pct = percent else {
+        guard let snapshot, snapshot.status == .ok, let pct = percent else {
             return Color(nsColor: NSColor(red: 0.55, green: 0.55, blue: 0.57, alpha: 1.0))
         }
         switch pct {
