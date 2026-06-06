@@ -59,23 +59,32 @@ local desktop-client account status — each value annotated with *freshness*,
 See [`docs/PROVIDERS.md`](docs/PROVIDERS.md) for the full matrix and
 [`docs/EXTENDING.md`](docs/EXTENDING.md) to onboard a new site.
 
-## Install
+## Installation & Setup
 
-1. Download **`StatsUsage.dmg`** from the
-   [latest release](https://github.com/Raghaverma/UsageStats/releases/latest).
-2. Open the DMG and drag **StatsUsage** into **Applications**.
-3. Because the app is open-source and ad-hoc signed (not notarized under a paid
-   Developer ID), the first launch is gated by Gatekeeper. **Right-click the app →
-   Open → Open**, or run:
+### 📥 Downloading the Application
+1. Download **`StatsUsage.dmg`** from the [Latest GitHub Release](https://github.com/Raghaverma/UsageStats/releases/latest).
+2. Open the downloaded `.dmg` disk image and drag **StatsUsage** into your **Applications** folder.
 
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/StatsUsage.app
-   ```
+### 🛡️ First Launch (macOS Gatekeeper Setup)
+Because the app is open-source and ad-hoc signed (not notarized under a paid Apple Developer ID), macOS will show a security warning on the first launch. You can bypass this easily:
+* **Option A (Recommended)**: Right-click the **StatsUsage** app in your `/Applications` folder, select **Open**, and then click **Open** on the confirmation dialog.
+* **Option B (Terminal)**: Run the following command in Terminal to clear the quarantine flag:
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/StatsUsage.app
+  ```
 
-4. A gauge icon appears in the menu bar. Open **Settings → Providers** to enable
-   providers and add credentials.
+### ⚙️ Configuration
+Once launched, a gauge icon will appear in your macOS menu bar. 
+1. Click the icon or hover near the notch/top-center to view the live island.
+2. Go to **Settings → Providers** to configure your API keys (securely saved in the macOS Keychain) and poll intervals.
 
-StatsUsage checks for updates automatically via a GitHub-hosted `latest.json`.
+---
+
+## 🔄 Automatic In-App Updates
+StatsUsage features a **fully automated, over-the-air update pipeline**:
+* **Silent Background Checks**: Every time you launch the app, it checks the GitHub release manifest (`latest.json`) in the background. If a newer version is published, it alerts you via a macOS system notification.
+* **One-Click Installation**: Go to **Settings → About**, click **Download and Install Update**, and the app will automatically download the latest ZIP, verify its integrity (via SHA256 checksum), swap the bundle, and relaunch the application for you. You never need to download the DMG again!
+* **Toggle Auto-Checks**: You can enable or disable background update checks at any time in **Settings → General → Updates**.
 
 ## Requirements
 
