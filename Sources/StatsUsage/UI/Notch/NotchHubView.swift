@@ -11,6 +11,16 @@ struct NotchHubView: View {
     var layout: NotchLayoutBridge
 
     @State private var isExpanded = false
+    @State private var hoverTask: Task<Void, Never>?
+
+    // Spring parameters matched to boring.notch's feel: springy open, critically
+    // damped close so it snaps shut without bouncing.
+    private var openAnimation: Animation {
+        .spring(response: 0.42, dampingFraction: 0.82, blendDuration: 0)
+    }
+    private var closeAnimation: Animation {
+        .spring(response: 0.35, dampingFraction: 1.0, blendDuration: 0)
+    }
 
     /// Bottom-corner radius of the physical notch; the collapsed island matches it so
     /// the painted ears read as a seamless continuation of the bezel.
@@ -43,7 +53,8 @@ struct NotchHubView: View {
             collapsedBar
             if isExpanded {
                 expandedBody
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    // Scale-from-top + fade avoids the slide-from-above clipping issue.
+                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
             }
         }
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
@@ -51,10 +62,18 @@ struct NotchHubView: View {
         .contentShape(NotchShape(bottomRadius: radius))
         .onHover { hovering in
             guard viewModel.config.notchExpandOnHover else { return }
-            // Critically damped (no overshoot) so the island settles cleanly instead of
-            // bouncing — especially noticeable on collapse.
-            withAnimation(.smooth(duration: 0.3)) {
-                isExpanded = hovering
+            hoverTask?.cancel()
+            if hovering {
+                // Expand immediately with a springy open animation.
+                withAnimation(openAnimation) { isExpanded = true }
+            } else {
+                // Debounce collapse: a 150 ms grace period prevents flicker when
+                // the cursor briefly clips the island edge mid-gesture.
+                hoverTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(150))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(closeAnimation) { isExpanded = false }
+                }
             }
         }
         .onTapGesture { onOpenSettings() }

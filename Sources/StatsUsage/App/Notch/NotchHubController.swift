@@ -72,6 +72,7 @@ final class NotchHubController {
                 layout: layout
             )
         )
+        hosting.onLayout = { [weak self] size in self?.resizePanel(to: size) }
         panel.contentView = hosting
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()

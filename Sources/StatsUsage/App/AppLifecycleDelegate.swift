@@ -32,6 +32,12 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         Task {
             try? await Task.sleep(for: .seconds(3))
             await vm.checkForUpdates(quietly: true)
+            // Re-check every 24 hours for the lifetime of the process.
+            let day: UInt64 = 24 * 60 * 60 * 1_000_000_000
+            while true {
+                try? await Task.sleep(nanoseconds: day)
+                await vm.checkForUpdates(quietly: true)
+            }
         }
     }
 }

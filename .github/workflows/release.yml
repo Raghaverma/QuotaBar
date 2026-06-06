@@ -51,6 +51,20 @@ jobs:
           echo "$VERSION" > VERSION
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Verify CI passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.sha }}"
+          echo "Checking CI status for $SHA..."
+          STATUS=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+            --jq '[.check_runs[] | select(.name == "Build and Test (macOS)") | .conclusion] | first // "none"')
+          if [ "$STATUS" != "success" ]; then
+            echo "::error::CI check 'Build and Test (macOS)' did not pass on $SHA (status: $STATUS). Aborting release."
+            exit 1
+          fi
+          echo "CI passed."
+
       - name: Build & Test
         run: |
           swift build

@@ -9,12 +9,15 @@ final class SettingsWindowController {
     init(viewModel: AppViewModel) {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 700, height: 500),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "StatsUsage Settings"
+        window.titlebarAppearsTransparent = false
         window.contentMinSize = NSSize(width: 640, height: 460)
+        // Hide the toolbar area entirely — no sidebar toggle, no extra chrome.
+        window.toolbar = nil
         window.center()
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: SettingsRootView(viewModel: viewModel))

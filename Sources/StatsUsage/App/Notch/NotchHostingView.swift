@@ -19,7 +19,16 @@ final class NotchLayoutBridge {
 /// Hosting view for the notch hub. `acceptsFirstMouse` lets a click register on the
 /// very first press even when the panel was not yet key, so the SwiftUI buttons and
 /// tap gesture inside the hub fire immediately instead of just focusing the window.
+///
+/// `layout()` measures the unconstrained SwiftUI content size via `sizeThatFits` and
+/// fires `onLayout` so the panel can expand before the first animation frame commits.
+/// This prevents the `.move(edge: .top)` insertion transition from sliding the
+/// expanded body out the bottom of a still-collapsed panel window.
 final class NotchHostingView: NSHostingView<NotchHubView> {
+    var onLayout: ((CGSize) -> Void)?
+
+    private var measuringSize = false
+
     required init(rootView: NotchHubView) {
         super.init(rootView: rootView)
     }
@@ -30,4 +39,15 @@ final class NotchHostingView: NSHostingView<NotchHubView> {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func layout() {
+        super.layout()
+        guard !measuringSize else { return }
+        measuringSize = true
+        let ideal = sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude,
+                                        height: CGFloat.greatestFiniteMagnitude))
+        measuringSize = false
+        guard ideal.width > 1, ideal.height > 1 else { return }
+        onLayout?(ideal)
+    }
 }

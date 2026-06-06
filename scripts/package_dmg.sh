@@ -98,7 +98,11 @@ DMG_PATH="$DIST/$APP_NAME.dmg"
 TEMP_DMG="$DIST/temp.dmg"
 
 echo "==> Creating temporary writable DMG..."
-hdiutil create -size 100m -fs HFS+ -volname "$APP_NAME" -ov "$TEMP_DMG" >/dev/null
+# Size the DMG to the app's actual disk usage plus 30 MB headroom so the
+# fixed 100 MB ceiling doesn't break larger builds.
+APP_MB=$(du -sm "$APP_DIR" | cut -f1)
+DMG_MB=$(( APP_MB + 30 ))
+hdiutil create -size "${DMG_MB}m" -fs HFS+ -volname "$APP_NAME" -ov "$TEMP_DMG" >/dev/null
 
 echo "==> Mounting temporary DMG..."
 ATTACH_INFO=$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG")

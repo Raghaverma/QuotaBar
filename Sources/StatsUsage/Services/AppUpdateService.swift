@@ -90,16 +90,37 @@ actor AppUpdateService {
         guard let finalURL = response.url, Self.isTrustedReleaseURL(finalURL) else {
             throw AppUpdateError.untrustedDownloadLocation
         }
-        let data = try Data(contentsOf: tempURL)
-        guard data.count == asset.size else {
+        // Stream the file through SHA256 in 256 KB chunks to avoid loading the
+        // whole ZIP into memory at once.
+        let fileSize = try FileManager.default
+            .attributesOfItem(atPath: tempURL.path)[.size] as? Int ?? 0
+        guard fileSize == asset.size else {
             throw AppUpdateError.unexpectedAssetSize
         }
-        let digest = SHA256.hash(data: data)
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        let hex = try streamingSHA256(at: tempURL)
         guard hex.caseInsensitiveCompare(asset.sha256) == .orderedSame else {
             throw AppUpdateError.checksumMismatch
         }
         return tempURL
+    }
+
+    private func streamingSHA256(at url: URL) throws -> String {
+        guard let stream = InputStream(url: url) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+        stream.open()
+        defer { stream.close() }
+        var hasher = SHA256()
+        let bufferSize = 256 * 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+        while true {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read == 0 { break }
+            if read < 0 { throw stream.streamError ?? CocoaError(.fileReadUnknown) }
+            hasher.update(data: UnsafeRawBufferPointer(start: buffer, count: read))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Unzips the downloaded update, replaces the running bundle, and launches the new version.
@@ -151,7 +172,7 @@ actor AppUpdateService {
         guard Bundle(url: newAppURL)?.bundleIdentifier == "com.statsusage.app" else {
             throw AppUpdateError.wrongBundleIdentifier
         }
-        try verifyCodeSignature(at: newAppURL)
+        try await verifyCodeSignature(at: newAppURL)
         
         let backupURL = fileManager.temporaryDirectory.appendingPathComponent("StatsUsage.app.bak-\(UUID().uuidString)")
         if fileManager.fileExists(atPath: backupURL.path) {
@@ -199,14 +220,23 @@ actor AppUpdateService {
         }
     }
 
-    private func verifyCodeSignature(at appURL: URL) throws {
+    private func verifyCodeSignature(at appURL: URL) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         process.arguments = ["--verify", "--deep", "--strict", appURL.path]
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw AppUpdateError.invalidCodeSignature
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            process.terminationHandler = { proc in
+                if proc.terminationStatus == 0 {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: AppUpdateError.invalidCodeSignature)
+                }
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
         }
     }
 
