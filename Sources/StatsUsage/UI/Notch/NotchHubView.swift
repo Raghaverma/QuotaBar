@@ -14,7 +14,12 @@ struct NotchHubView: View {
 
     private static let coordinateSpace = "notchHubRoot"
 
-    private var earWidth: CGFloat { 84 }
+    /// Bottom-corner radius of the physical notch; the collapsed island matches it so
+    /// the painted ears read as a seamless continuation of the bezel.
+    private var collapsedRadius: CGFloat { 11 }
+    private var expandedRadius: CGFloat { 20 }
+
+    private var earWidth: CGFloat { 70 }
     private var collapsedWidth: CGFloat { geometry.notchWidth + earWidth * 2 }
     private var expandedWidth: CGFloat { max(collapsedWidth, 380) }
     private var collapsedHeight: CGFloat { geometry.notchHeight }
@@ -40,7 +45,8 @@ struct NotchHubView: View {
     }
 
     private var island: some View {
-        VStack(spacing: 0) {
+        let radius = isExpanded ? expandedRadius : collapsedRadius
+        return VStack(spacing: 0) {
             collapsedBar
             if isExpanded {
                 expandedBody
@@ -48,34 +54,61 @@ struct NotchHubView: View {
             }
         }
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
-        .background(
-            NotchShape(bottomRadius: 16)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            NotchShape(bottomRadius: 16)
-                .stroke(
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.15),
-                            .white.opacity(0.03),
-                            .purple.opacity(0.08),
-                            .blue.opacity(0.08)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    ),
-                    lineWidth: 1.0
-                )
-        )
-        .contentShape(NotchShape(bottomRadius: 16))
+        .background(islandBackground(radius: radius))
+        .overlay {
+            // Only draw a visible edge once expanded — collapsed, the island must be
+            // an invisible black extension of the notch with no floating-box outline.
+            if isExpanded {
+                NotchShape(bottomRadius: radius)
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.18),
+                                .white.opacity(0.04),
+                                .purple.opacity(0.10),
+                                .blue.opacity(0.10)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 1.0
+                    )
+            }
+        }
+        .shadow(color: .black.opacity(isExpanded ? 0.45 : 0), radius: 18, y: 10)
+        .contentShape(NotchShape(bottomRadius: radius))
         .onHover { hovering in
             guard viewModel.config.notchExpandOnHover else { return }
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
                 isExpanded = hovering
             }
         }
         .onTapGesture { onOpenSettings() }
+    }
+
+    /// Opaque black so the island merges with the physical notch's housing rather than
+    /// floating as a translucent box. A faint top sheen and a darkened material layer
+    /// add depth only on the expanded drop-down panel.
+    private func islandBackground(radius: CGFloat) -> some View {
+        NotchShape(bottomRadius: radius)
+            .fill(Color.black)
+            .overlay {
+                if isExpanded {
+                    NotchShape(bottomRadius: radius)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.55)
+                        .overlay(
+                            NotchShape(bottomRadius: radius)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [.white.opacity(0.07), .clear],
+                                        startPoint: .top,
+                                        endPoint: .center
+                                    )
+                                )
+                        )
+                }
+            }
     }
 
     // MARK: Collapsed
@@ -119,6 +152,17 @@ struct NotchHubView: View {
 
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.5))
+                Text("USAGE")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(1.4)
+                    .foregroundStyle(.white.opacity(0.5))
+                Spacer()
+            }
+            .padding(.top, 2)
             Divider().overlay(Color.white.opacity(0.12))
             ForEach(rows, id: \.id) { row in
                 NotchProviderRow(snapshot: row, name: name(for: row.source))

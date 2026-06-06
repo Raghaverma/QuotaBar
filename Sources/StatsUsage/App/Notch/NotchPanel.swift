@@ -19,8 +19,10 @@ final class NotchPanel: NSPanel {
         hasShadow = false
         hidesOnDeactivate = false
         isMovable = false
-        // Let SwiftUI inside decide what is interactive; transparent areas pass through.
-        ignoresMouseEvents = false
+        // Pass clicks through to other apps by default. The controller flips this to
+        // `false` only while the cursor is actually over the island, so the large
+        // transparent panel never creates a dead zone over the desktop/other windows.
+        ignoresMouseEvents = true
     }
 
     // A borderless panel must opt in to receiving mouse/key without stealing focus.

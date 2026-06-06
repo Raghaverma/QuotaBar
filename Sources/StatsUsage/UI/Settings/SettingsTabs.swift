@@ -192,6 +192,11 @@ struct ConfigureProviderSheet: View {
     @State private var userID: String = ""
     @State private var groupID: String = ""
 
+    // Alert thresholds (mirror of the provider's AlertRule).
+    @State private var lowRemaining: Double = 10
+    @State private var maxConsecutiveFailures: Int = 3
+    @State private var notifyOnAuthError: Bool = true
+
     var body: some View {
         NavigationStack {
             Form {
@@ -209,6 +214,35 @@ struct ConfigureProviderSheet: View {
                 
                 Section("Security / Credentials") {
                     SecureField("API Key / Token", text: $apiKey)
+                }
+
+                Section("Alerts") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Low-remaining alert")
+                            Spacer()
+                            Text("\(Int(lowRemaining))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $lowRemaining, in: 0...100, step: 1)
+                        Text("Notify when remaining quota falls to or below this level.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Stepper(value: $maxConsecutiveFailures, in: 0...20) {
+                        HStack {
+                            Text("Failure alert")
+                            Spacer()
+                            Text(maxConsecutiveFailures == 0
+                                 ? "Off"
+                                 : "After \(maxConsecutiveFailures) failures")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Toggle("Notify on auth / sign-in errors", isOn: $notifyOnAuthError)
                 }
 
                 if isRelay {
@@ -236,7 +270,7 @@ struct ConfigureProviderSheet: View {
                 load()
             }
         }
-        .frame(width: 400, height: isRelay ? 450 : 300)
+        .frame(width: 400, height: isRelay ? 640 : 500)
     }
 
     private var isRelay: Bool {
@@ -248,6 +282,9 @@ struct ConfigureProviderSheet: View {
         name = provider.name
         pollIntervalMinutes = provider.pollIntervalSec / 60
         apiKey = viewModel.getSecret(for: providerID) ?? ""
+        lowRemaining = provider.threshold.lowRemaining
+        maxConsecutiveFailures = provider.threshold.maxConsecutiveFailures
+        notifyOnAuthError = provider.threshold.notifyOnAuthError
         if let relay = provider.relayConfig {
             baseURL = relay.baseURL
             userID = relay.userID ?? ""
@@ -266,6 +303,11 @@ struct ConfigureProviderSheet: View {
             if let idx = config.providers.firstIndex(where: { $0.id == providerID }) {
                 config.providers[idx].name = name
                 config.providers[idx].pollIntervalSec = pollIntervalMinutes * 60
+                config.providers[idx].threshold = AlertRule(
+                    lowRemaining: lowRemaining,
+                    maxConsecutiveFailures: maxConsecutiveFailures,
+                    notifyOnAuthError: notifyOnAuthError
+                )
                 if isRelay {
                     config.providers[idx].relayConfig?.baseURL = baseURL
                     config.providers[idx].relayConfig?.userID = userID.isEmpty ? nil : userID

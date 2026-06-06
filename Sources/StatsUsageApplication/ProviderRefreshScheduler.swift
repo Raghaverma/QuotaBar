@@ -1,5 +1,4 @@
 import Foundation
-
 /// What the scheduler needs to know about one provider to keep it fresh.
 public struct ProviderRefreshScheduleDescriptor: Sendable {
     public var id: String

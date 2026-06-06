@@ -9,7 +9,9 @@ final class NotchHubController {
     private let viewModel: AppViewModel
     private let onOpenSettings: () -> Void
     private var panel: NotchPanel?
+    private var hitState: NotchHitState?
     private var screenObserver: NSObjectProtocol?
+    private var mouseMonitor: Any?
 
     /// Generous fixed footprint; the island animates within it, top-anchored.
     private let panelHeight: CGFloat = 320
@@ -73,11 +75,51 @@ final class NotchHubController {
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
         self.panel = panel
+        self.hitState = hitState
+
+        installMouseMonitor()
     }
 
     private func teardown() {
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+            self.mouseMonitor = nil
+        }
         panel?.orderOut(nil)
         panel = nil
+        hitState = nil
+    }
+
+    /// Cross-app click-through requires toggling the *window's* `ignoresMouseEvents`
+    /// (a `nil` view hit-test only forwards within the same app). A global mouse
+    /// monitor lets us make the panel interactive only while the cursor is over the
+    /// island, and transparent to clicks everywhere else.
+    private func installMouseMonitor() {
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePassthrough() }
+        }
+        updatePassthrough()
+    }
+
+    /// Enable interaction only when the pointer is within the island's screen rect.
+    private func updatePassthrough() {
+        guard let panel, let island = hitState?.islandFrame,
+              island.width > 0, island.height > 0 else {
+            panel?.ignoresMouseEvents = true
+            return
+        }
+        // island frame is top-left origin within the panel's content; convert to the
+        // panel's bottom-left AppKit space, then to global screen coordinates.
+        let frame = panel.frame
+        let screenRect = NSRect(
+            x: frame.minX + island.minX,
+            y: frame.minY + (frame.height - island.maxY),
+            width: island.width,
+            height: island.height
+        )
+        panel.ignoresMouseEvents = !screenRect.contains(NSEvent.mouseLocation)
     }
 
     private func preferredScreen() -> NSScreen? {
