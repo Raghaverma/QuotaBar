@@ -31,6 +31,16 @@ struct GeneralSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: autoUpdateBinding) {
+                    SettingRowLabel(icon: "arrow.triangle.2.circlepath", color: .purple,
+                                    title: "Automatically check for updates",
+                                    subtitle: "Keep StatsUsage fresh with the latest features")
+                }
+            } header: {
+                Text("Updates")
+            }
+
+            Section {
                 Picker(selection: resourceModeBinding) {
                     Text("Responsive — 3 min").tag(ResourceMode.responsive)
                     Text("Balanced — 5 min").tag(ResourceMode.balanced)
@@ -58,6 +68,10 @@ struct GeneralSettingsView: View {
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(get: { viewModel.config.launchAtLoginEnabled },
                 set: { newValue in viewModel.updateConfig { $0.launchAtLoginEnabled = newValue } })
+    }
+    private var autoUpdateBinding: Binding<Bool> {
+        Binding(get: { viewModel.config.autoUpdateEnabled },
+                set: { newValue in viewModel.updateConfig { $0.autoUpdateEnabled = newValue } })
     }
     private var resourceModeBinding: Binding<ResourceMode> {
         Binding(get: { viewModel.config.resourceMode },
@@ -401,6 +415,8 @@ struct ConfigureProviderSheet: View {
 
 /// About tab: app identity, version, and links.
 struct AboutSettingsView: View {
+    @Bindable var viewModel: AppViewModel
+
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -424,6 +440,126 @@ struct AboutSettingsView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 320)
 
+            Divider()
+                .frame(maxWidth: 280)
+                .padding(.vertical, 8)
+
+            // Update Section
+            VStack(spacing: 12) {
+                switch viewModel.updateState {
+                case .idle:
+                    Button(action: {
+                        Task {
+                            await viewModel.checkForUpdates()
+                        }
+                    }) {
+                        Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                            .frame(minWidth: 150)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    
+                case .checking:
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking for updates...")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    
+                case .upToDate:
+                    VStack(spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("StatsUsage is up to date")
+                                .bold()
+                        }
+                        Button("Check Again") {
+                            Task {
+                                await viewModel.checkForUpdates()
+                            }
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                    }
+                    .font(.callout)
+                    
+                case .available(let manifest):
+                    VStack(spacing: 10) {
+                        Text("New Version Available: \(manifest.version)")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        
+                        Button(action: {
+                            Task {
+                                await viewModel.installAvailableUpdate()
+                            }
+                        }) {
+                            Text("Download and Install Update")
+                                .frame(minWidth: 180)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                        .controlSize(.large)
+                        
+                        if let url = URL(string: manifest.release_url) {
+                            Link("View Release Notes", destination: url)
+                                .font(.caption)
+                        }
+                    }
+                    .padding()
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                    .frame(maxWidth: 320)
+                    
+                case .downloading:
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Downloading update...")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    
+                case .installing:
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Installing and relaunching...")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    
+                case .error(let error):
+                    VStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.red)
+                            Text("Update failed")
+                                .bold()
+                        }
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 280)
+                        
+                        Button("Try Again") {
+                            Task {
+                                await viewModel.checkForUpdates()
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .font(.callout)
+                }
+            }
+            .frame(height: 100)
+
+            Divider()
+                .frame(maxWidth: 280)
+                .padding(.vertical, 8)
+
             HStack(spacing: 10) {
                 Link(destination: URL(string: "https://github.com/Raghaverma/UsageStats")!) {
                     Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -434,7 +570,6 @@ struct AboutSettingsView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
-            .padding(.top, 4)
 
             Spacer()
 

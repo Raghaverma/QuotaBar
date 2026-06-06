@@ -37,7 +37,7 @@ struct SettingsRootView: View {
             case .menuBar: MenuBarSettingsView(viewModel: viewModel)
             case .notch: NotchSettingsView(viewModel: viewModel)
             case .providers: ProvidersSettingsView(viewModel: viewModel)
-            case .about: AboutSettingsView()
+            case .about: AboutSettingsView(viewModel: viewModel)
             }
         }
     }

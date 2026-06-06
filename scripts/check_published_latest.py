@@ -6,7 +6,7 @@ import time
 import urllib.request
 import json
 
-owner_repo = os.environ.get("OWNER_REPO", "statsusage/StatsUsage")
+owner_repo = os.environ.get("OWNER_REPO", "Raghaverma/UsageStats")
 version = os.environ["VERSION"]
 url = f"https://github.com/{owner_repo}/releases/latest/download/latest.json"
 

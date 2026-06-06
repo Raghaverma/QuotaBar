@@ -13,7 +13,7 @@ from pathlib import Path
 
 DIST = Path("dist")
 version = os.environ["VERSION"]
-owner_repo = os.environ.get("OWNER_REPO", "statsusage/StatsUsage")
+owner_repo = os.environ.get("OWNER_REPO", "Raghaverma/UsageStats")
 base = f"https://github.com/{owner_repo}/releases/download/v{version}"
 
 

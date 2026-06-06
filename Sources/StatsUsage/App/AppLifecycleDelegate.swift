@@ -28,5 +28,10 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             viewModel: vm,
             onOpenSettings: { [weak statusBar] in statusBar?.openSettings() }
         )
+
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            await vm.checkForUpdates(quietly: true)
+        }
     }
 }

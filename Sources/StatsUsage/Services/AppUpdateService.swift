@@ -1,14 +1,15 @@
 import Foundation
 import CryptoKit
+import AppKit
 
 /// The `latest.json` manifest published as a GitHub Release asset.
-struct LatestReleaseManifest: Codable, Sendable {
-    struct Asset: Codable, Sendable {
+struct LatestReleaseManifest: Codable, Sendable, Equatable {
+    struct Asset: Codable, Sendable, Equatable {
         var url: String
         var sha256: String
         var size: Int
     }
-    struct Assets: Codable, Sendable {
+    struct Assets: Codable, Sendable, Equatable {
         var macos_zip: Asset?
         var macos_dmg: Asset?
     }
@@ -42,7 +43,7 @@ actor AppUpdateService {
     private let session: URLSession
 
     init(
-        manifestURL: URL = URL(string: "https://github.com/statsusage/StatsUsage/releases/latest/download/latest.json")!,
+        manifestURL: URL = URL(string: "https://github.com/Raghaverma/UsageStats/releases/latest/download/latest.json")!,
         session: URLSession = .shared
     ) {
         self.manifestURL = manifestURL
@@ -72,6 +73,83 @@ actor AppUpdateService {
             throw AppUpdateError.checksumMismatch
         }
         return tempURL
+    }
+
+    /// Unzips the downloaded update, replaces the running bundle, and launches the new version.
+    func installUpdate(zipURL: URL) async throws {
+        let mainBundleURL = Bundle.main.bundleURL
+        guard mainBundleURL.pathExtension == "app" else {
+            throw AppUpdateError.unsupportedInstallLocation
+        }
+        
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        
+        defer {
+            try? fileManager.removeItem(at: tempDir)
+        }
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", zipURL.path, tempDir.path]
+        
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            process.terminationHandler = { proc in
+                if proc.terminationStatus == 0 {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: NSError(
+                        domain: "AppUpdateService",
+                        code: Int(proc.terminationStatus),
+                        userInfo: [NSLocalizedDescriptionKey: "Failed to extract ZIP using ditto (status: \(proc.terminationStatus))"]
+                    ))
+                }
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+        
+        let newAppURL = tempDir.appendingPathComponent("StatsUsage.app")
+        guard fileManager.fileExists(atPath: newAppURL.path) else {
+            throw NSError(
+                domain: "AppUpdateService",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Extracted update did not contain StatsUsage.app"]
+            )
+        }
+        
+        let backupURL = fileManager.temporaryDirectory.appendingPathComponent("StatsUsage.app.bak-\(UUID().uuidString)")
+        if fileManager.fileExists(atPath: backupURL.path) {
+            try? fileManager.removeItem(at: backupURL)
+        }
+        
+        try fileManager.moveItem(at: mainBundleURL, to: backupURL)
+        
+        do {
+            try fileManager.moveItem(at: newAppURL, to: mainBundleURL)
+            try? fileManager.removeItem(at: backupURL)
+        } catch {
+            try? fileManager.moveItem(at: backupURL, to: mainBundleURL)
+            throw error
+        }
+        
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.arguments = []
+        
+        await MainActor.run {
+            NSWorkspace.shared.openApplication(at: mainBundleURL, configuration: configuration) { _, error in
+                if let error = error {
+                    NSLog("Failed to relaunch application: \(error)")
+                }
+                Task { @MainActor in
+                    NSApp.terminate(nil)
+                }
+            }
+        }
     }
 
     /// Compare semantic-ish version strings ("2.2.2" vs "2.10.0") component-wise.

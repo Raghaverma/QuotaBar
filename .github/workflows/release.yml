@@ -1,7 +1,9 @@
 name: Release
+
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -11,16 +13,30 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
+    name: Build & Publish Release
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-      - name: Resolve version
+      - name: Cache Swift PM Dependencies
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve Version
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -29,13 +45,16 @@ jobs:
             VERSION="${GITHUB_REF_NAME#v}"
           fi
           if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Invalid version: $VERSION"; exit 1
+            echo "::error::Invalid version format: $VERSION. Must be X.Y.Z"
+            exit 1
           fi
           echo "$VERSION" > VERSION
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build & test
-        run: swift build && swift test
+      - name: Build & Test
+        run: |
+          swift build
+          swift test
 
       - name: Package DMG + ZIP
         env:
@@ -51,18 +70,25 @@ jobs:
       - name: Validate latest.json
         run: python3 scripts/validate_latest_json.py dist/latest.json "${{ steps.version.outputs.version }}"
 
-      - name: Create release
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            dist/StatsUsage.dmg dist/StatsUsage-macOS.zip dist/latest.json \
-            --title "v${{ steps.version.outputs.version }}" \
+          VERSION="v${{ steps.version.outputs.version }}"
+          echo "Publishing release $VERSION..."
+          gh release create "$VERSION" \
+            dist/StatsUsage.dmg \
+            dist/StatsUsage-macOS.zip \
+            dist/latest.json \
+            --title "$VERSION" \
             --generate-notes || \
-          gh release upload "v${{ steps.version.outputs.version }}" \
-            dist/StatsUsage.dmg dist/StatsUsage-macOS.zip dist/latest.json --clobber
+          gh release upload "$VERSION" \
+            dist/StatsUsage.dmg \
+            dist/StatsUsage-macOS.zip \
+            dist/latest.json \
+            --clobber
 
-      - name: Post-publish check
+      - name: Post-Publish Verification
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER_REPO: ${{ github.repository }}

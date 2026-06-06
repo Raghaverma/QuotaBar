@@ -18,6 +18,20 @@ final class AppViewModel {
     private(set) var usageHistory: [String: [Double]] = [:]
     private let maxHistory = 30
 
+    // Update State
+    enum UpdateState: Sendable, Equatable {
+        case idle
+        case checking
+        case upToDate
+        case available(LatestReleaseManifest)
+        case downloading
+        case installing
+        case error(String)
+    }
+
+    private(set) var updateState: UpdateState = .idle
+    private let updateService = AppUpdateService()
+
     // Collaborators.
     private let configStore: ConfigStore
     private let keychain: KeychainService
@@ -172,5 +186,55 @@ final class AppViewModel {
               let service = provider.auth.keychainService,
               let account = provider.auth.keychainAccount else { return nil }
         return try? keychain.secret(service: service, account: account)
+    }
+
+    // MARK: - App Updates
+
+    /// Check for updates. If quietly is true, only update state if a new version is found.
+    func checkForUpdates(quietly: Bool = false) async {
+        if quietly {
+            guard config.autoUpdateEnabled else { return }
+            do {
+                if let manifest = try await updateService.fetchLatestRelease(current: AppVersion.current) {
+                    updateState = .available(manifest)
+                    notificationService.postCustom(
+                        title: "Update Available",
+                        body: "Version \(manifest.version) is ready. Click to update."
+                    )
+                }
+            } catch {
+                // Ignore silent update check errors
+            }
+            return
+        }
+
+        updateState = .checking
+        do {
+            if let manifest = try await updateService.fetchLatestRelease(current: AppVersion.current) {
+                updateState = .available(manifest)
+            } else {
+                updateState = .upToDate
+            }
+        } catch {
+            updateState = .error((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    /// Download and install the update
+    func installAvailableUpdate() async {
+        guard case .available(let manifest) = updateState else { return }
+
+        updateState = .downloading
+        do {
+            let tempURL = try await updateService.prepareUpdate(manifest)
+            updateState = .installing
+            try await updateService.installUpdate(zipURL: tempURL)
+        } catch {
+            updateState = .error((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+
+    func resetUpdateState() {
+        updateState = .idle
     }
 }
