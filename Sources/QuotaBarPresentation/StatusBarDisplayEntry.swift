@@ -30,14 +30,17 @@ public struct StatusBarDisplayEntry: Equatable, Sendable {
 /// Pure mapping from a snapshot to a menu-bar entry. Lives in Presentation so it
 /// is testable without any AppKit dependency.
 public enum StatusBarDisplayPresenter {
-    public static func makeEntry(name: String, snapshot: UsageSnapshot) -> StatusBarDisplayEntry {
+    /// Mask used in place of real values when the user has enabled "Hide usage values".
+    public static let maskedValueText = "•••"
+
+    public static func makeEntry(name: String, snapshot: UsageSnapshot, maskValues: Bool = false) -> StatusBarDisplayEntry {
         let pct: Double? = snapshot.remainingPercent ?? snapshot.quotaWindows.first?.remainingPercent
-        let pctText = pct.map { "\(Int($0.rounded()))%" } ?? "—"
+        let pctText = maskValues ? maskedValueText : (pct.map { "\(Int($0.rounded()))%" } ?? "—")
         return StatusBarDisplayEntry(
             providerID: snapshot.source,
             name: name,
             percentText: pctText,
-            remainingPercent: pct,
+            remainingPercent: maskValues ? nil : pct,
             iconName: snapshot.source,
             isHealthy: snapshot.status == .ok
         )

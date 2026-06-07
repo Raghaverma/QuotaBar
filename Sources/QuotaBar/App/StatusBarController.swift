@@ -70,7 +70,7 @@ final class StatusBarController {
         return ids.compactMap { id in
             guard let snapshot = viewModel.snapshots[id] else { return nil }
             let name = config.providers.first(where: { $0.id == id })?.name ?? id
-            return StatusBarDisplayPresenter.makeEntry(name: name, snapshot: snapshot)
+            return StatusBarDisplayPresenter.makeEntry(name: name, snapshot: snapshot, maskValues: config.hideUsageValuesEnabled)
         }
     }
 

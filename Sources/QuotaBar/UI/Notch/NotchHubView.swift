@@ -146,7 +146,7 @@ struct NotchHubView: View {
             // Show every enabled provider — even ones still waiting on data (e.g. a
             // scaffolded provider) — so none silently disappear from the panel.
             ForEach(enabledProviders) { provider in
-                NotchProviderRow(name: provider.name, snapshot: viewModel.snapshots[provider.id])
+                NotchProviderRow(name: provider.name, snapshot: viewModel.snapshots[provider.id], maskValues: viewModel.config.hideUsageValuesEnabled)
             }
             if enabledProviders.isEmpty {
                 Text("No providers enabled")
@@ -196,6 +196,7 @@ struct NotchHubView: View {
     }
 
     private func percentText(_ snap: UsageSnapshot) -> String {
+        if viewModel.config.hideUsageValuesEnabled { return StatusBarDisplayPresenter.maskedValueText }
         if let pct = snap.remainingPercent ?? snap.quotaWindows.first?.remainingPercent {
             return "\(Int(pct.rounded()))%"
         }
@@ -207,7 +208,9 @@ struct NotchHubView: View {
     }
 
     private func color(for snap: UsageSnapshot) -> Color {
-        let pct = snap.remainingPercent ?? snap.quotaWindows.first?.remainingPercent
+        let pct = viewModel.config.hideUsageValuesEnabled
+            ? nil
+            : (snap.remainingPercent ?? snap.quotaWindows.first?.remainingPercent)
         guard snap.status == .ok, let pct else {
             return Color(nsColor: NSColor(red: 0.55, green: 0.55, blue: 0.57, alpha: 1.0))
         }
@@ -236,11 +239,13 @@ private struct IslandSizePreferenceKey: PreferenceKey {
 private struct NotchProviderRow: View {
     let name: String
     let snapshot: UsageSnapshot?
+    let maskValues: Bool
 
     @State private var animatedPercent: Double = 0
 
     private var percent: Double? {
-        snapshot?.remainingPercent ?? snapshot?.quotaWindows.first?.remainingPercent
+        guard !maskValues else { return nil }
+        return snapshot?.remainingPercent ?? snapshot?.quotaWindows.first?.remainingPercent
     }
 
     var body: some View {
@@ -291,7 +296,7 @@ private struct NotchProviderRow: View {
                 }
             }
             Spacer()
-            Text(percent.map { "\(Int($0.rounded()))%" } ?? "—")
+            Text(maskValues ? StatusBarDisplayPresenter.maskedValueText : (percent.map { "\(Int($0.rounded()))%" } ?? "—"))
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(percent == nil ? .white.opacity(0.4) : .white)
         }

@@ -59,6 +59,7 @@ struct AppConfig: Codable, Equatable, Sendable {
     var resourceMode: ResourceMode
     var launchAtLoginEnabled: Bool
     var showOfficialAccountEmailInMenuBar: Bool
+    var hideUsageValuesEnabled: Bool
     var statusBarProviderID: String?
     var statusBarMultiUsageEnabled: Bool
     var statusBarMultiProviderIDs: [String]
@@ -76,6 +77,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         resourceMode: ResourceMode = .balanced,
         launchAtLoginEnabled: Bool = false,
         showOfficialAccountEmailInMenuBar: Bool = false,
+        hideUsageValuesEnabled: Bool = false,
         statusBarProviderID: String? = nil,
         statusBarMultiUsageEnabled: Bool = false,
         statusBarMultiProviderIDs: [String] = [],
@@ -92,6 +94,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         self.resourceMode = resourceMode
         self.launchAtLoginEnabled = launchAtLoginEnabled
         self.showOfficialAccountEmailInMenuBar = showOfficialAccountEmailInMenuBar
+        self.hideUsageValuesEnabled = hideUsageValuesEnabled
         self.statusBarProviderID = statusBarProviderID
         self.statusBarMultiUsageEnabled = statusBarMultiUsageEnabled
         self.statusBarMultiProviderIDs = statusBarMultiProviderIDs
@@ -109,6 +112,7 @@ struct AppConfig: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case language, resourceMode, launchAtLoginEnabled, showOfficialAccountEmailInMenuBar
+        case hideUsageValuesEnabled
         case statusBarProviderID, statusBarMultiUsageEnabled, statusBarMultiProviderIDs
         case statusBarAppearanceMode, statusBarDisplayStyle, menuBarWidgetStyle
         case notchEnabled, notchProviderID, notchExpandOnHover, autoUpdateEnabled, providers
@@ -120,6 +124,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         resourceMode = try c.decodeIfPresent(ResourceMode.self, forKey: .resourceMode) ?? .balanced
         launchAtLoginEnabled = try c.decodeIfPresent(Bool.self, forKey: .launchAtLoginEnabled) ?? false
         showOfficialAccountEmailInMenuBar = try c.decodeIfPresent(Bool.self, forKey: .showOfficialAccountEmailInMenuBar) ?? false
+        hideUsageValuesEnabled = try c.decodeIfPresent(Bool.self, forKey: .hideUsageValuesEnabled) ?? false
         statusBarProviderID = try c.decodeIfPresent(String.self, forKey: .statusBarProviderID)
         statusBarMultiUsageEnabled = try c.decodeIfPresent(Bool.self, forKey: .statusBarMultiUsageEnabled) ?? false
         statusBarMultiProviderIDs = try c.decodeIfPresent([String].self, forKey: .statusBarMultiProviderIDs) ?? []

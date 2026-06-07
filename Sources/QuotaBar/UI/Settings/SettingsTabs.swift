@@ -51,6 +51,11 @@ struct GeneralSettingsView: View {
                                     title: "Show account identifiers",
                                     subtitle: "Display account email or labels in the menu popover")
                 }
+                Toggle(isOn: hideUsageValuesBinding) {
+                    SettingRowLabel(icon: "eye.slash", color: .gray,
+                                    title: "Hide usage values",
+                                    subtitle: "Mask percentages and counts in the menu bar, notch, and popover — handy when screen sharing")
+                }
             } header: {
                 Text("Privacy")
             }
@@ -74,6 +79,10 @@ struct GeneralSettingsView: View {
     private var accountVisibilityBinding: Binding<Bool> {
         Binding(get: { viewModel.config.showOfficialAccountEmailInMenuBar },
                 set: { newValue in viewModel.updateConfig { $0.showOfficialAccountEmailInMenuBar = newValue } })
+    }
+    private var hideUsageValuesBinding: Binding<Bool> {
+        Binding(get: { viewModel.config.hideUsageValuesEnabled },
+                set: { newValue in viewModel.updateConfig { $0.hideUsageValuesEnabled = newValue } })
     }
 }
 

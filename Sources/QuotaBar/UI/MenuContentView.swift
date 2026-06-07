@@ -50,6 +50,7 @@ struct MenuContentView: View {
                         isRefreshing: viewModel.refreshingProviderIDs.contains(provider.id),
                         trend: viewModel.trendDescription(for: provider.id),
                         showAccount: viewModel.config.showOfficialAccountEmailInMenuBar,
+                        maskValues: viewModel.config.hideUsageValuesEnabled,
                         onRetry: { viewModel.testConnection(providerID: provider.id) }
                     )
                 }
@@ -81,6 +82,7 @@ struct ProviderCardView: View {
     let isRefreshing: Bool
     let trend: String?
     let showAccount: Bool
+    let maskValues: Bool
     let onRetry: () -> Void
 
     var body: some View {
@@ -105,14 +107,14 @@ struct ProviderCardView: View {
             } else if let snapshot, !snapshot.note.isEmpty {
                 Text(snapshot.note).font(.caption2).foregroundStyle(.secondary)
             }
-            if let trend {
+            if let trend, !maskValues {
                 Text(trend).font(.caption2).foregroundStyle(.secondary)
             }
             ForEach(snapshot?.quotaWindows ?? []) { window in
                 HStack {
                     Text(window.title).font(.caption2)
                     Spacer()
-                    Text(MenuQuotaPresenter.remainingText(window)).font(.caption2)
+                    Text(maskValues ? StatusBarDisplayPresenter.maskedValueText : MenuQuotaPresenter.remainingText(window)).font(.caption2)
                     if let countdown = MenuQuotaPresenter.resetCountdown(window) {
                         Text("· \(countdown)").font(.caption2).foregroundStyle(.secondary)
                     }
@@ -123,6 +125,7 @@ struct ProviderCardView: View {
     }
 
     private var primaryValue: String {
+        if maskValues { return StatusBarDisplayPresenter.maskedValueText }
         if let pct = snapshot?.remainingPercent { return "\(Int(pct.rounded()))%" }
         if let remaining = snapshot?.remaining { return "\(Int(remaining)) \(snapshot?.unit ?? "")" }
         return "—"
