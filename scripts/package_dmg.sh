@@ -106,7 +106,14 @@ hdiutil create -size "${DMG_MB}m" -fs HFS+ -volname "$APP_NAME" -ov "$TEMP_DMG" 
 
 echo "==> Mounting temporary DMG..."
 ATTACH_INFO=$(hdiutil attach -readwrite -noverify -noautoopen "$TEMP_DMG")
-MOUNT_POINT=$(echo "$ATTACH_INFO" | grep -o '/Volumes/.*')
+# Extract mount point robustly: last field of the line containing /Volumes/.
+# grep -o with pipefail kills the script on no-match; awk is always safe.
+MOUNT_POINT=$(echo "$ATTACH_INFO" | awk -F'\t' '/\/Volumes\//{mp=$NF} END{print mp}' | tr -d ' \t')
+if [ -z "$MOUNT_POINT" ]; then
+  echo "::error::Could not determine DMG mount point. hdiutil output:"
+  echo "$ATTACH_INFO"
+  exit 1
+fi
 
 echo "==> Copying files to DMG..."
 cp -R "$APP_DIR" "$MOUNT_POINT/"
