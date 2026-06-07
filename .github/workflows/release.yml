@@ -60,7 +60,9 @@ jobs:
         run: |
           SHA="${{ github.sha }}"
           echo "Checking CI status for $SHA..."
-          for i in $(seq 1 30); do
+          # macOS runners can sit queued for 15-20+ min before a run even starts,
+          # so this needs real headroom beyond the CI job's own runtime.
+          for i in $(seq 1 80); do
             RUN=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
               --jq '[.check_runs[] | select(.name == "Build and Test (macOS)")] | first')
             if [ -z "$RUN" ] || [ "$RUN" = "null" ]; then
