@@ -810,6 +810,20 @@ struct AboutSettingsView: View {
             }
             .frame(height: 100)
 
+            // Auto-update toggle — mirrors the one in General settings so users
+            // don't have to leave the About tab to change this preference.
+            Toggle(isOn: Binding(
+                get: { viewModel.config.autoUpdateEnabled },
+                set: { newValue in viewModel.updateConfig { $0.autoUpdateEnabled = newValue } }
+            )) {
+                Label("Automatically download and install updates",
+                      systemImage: "arrow.down.circle")
+                    .font(.callout)
+            }
+            .toggleStyle(.switch)
+            .frame(maxWidth: 320)
+            .padding(.top, 4)
+
             Divider()
                 .frame(maxWidth: 280)
                 .padding(.vertical, 8)

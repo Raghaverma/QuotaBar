@@ -2,8 +2,8 @@ import SwiftUI
 import QuotaBarDomain
 import QuotaBarPresentation
 
-/// The Dynamic-Island-style hub. Collapsed it straddles the notch with a compact
-/// readout on each ear; on hover it expands downward into a live usage panel.
+/// The Dynamic-Island-style hub. Collapsed it sits over the physical notch at its
+/// exact hardware dimensions; on hover it expands downward into a live usage panel.
 struct NotchHubView: View {
     @Bindable var viewModel: AppViewModel
     let geometry: NotchGeometry
@@ -11,6 +11,7 @@ struct NotchHubView: View {
     var layout: NotchLayoutBridge
 
     @State private var isExpanded = false
+    @State private var isHoverIntending = false
     @State private var openIntentTask: Task<Void, Never>?
     @State private var stickyCloseTask: Task<Void, Never>?
 
@@ -28,38 +29,38 @@ struct NotchHubView: View {
     // opposite: stay open through brief exits (a finger slipping off the trackpad,
     // the cursor clipping the edge) so the panel doesn't flicker shut and reopen.
     private let openIntentDelay: Duration = .milliseconds(350)
-    private let stickyCloseDelay: Duration = .milliseconds(1000)
+    private let stickyCloseDelay: Duration = .milliseconds(200)
 
-    /// Bottom-corner radius of the physical notch; the collapsed island matches it so
-    /// the painted ears read as a seamless continuation of the bezel.
     private var collapsedRadius: CGFloat { 11 }
     private var expandedRadius: CGFloat { 20 }
 
-    private var earWidth: CGFloat { 70 }
-    private var collapsedWidth: CGFloat { geometry.notchWidth + earWidth * 2 }
-    private var expandedWidth: CGFloat { max(collapsedWidth, 380) }
+    // Collapsed footprint matches the physical notch exactly (derived from NSScreen
+    // safeAreaInsets / auxiliaryTopLeft+RightArea in NotchGeometry). No extra width.
+    private var collapsedWidth:  CGFloat { geometry.notchWidth }
     private var collapsedHeight: CGFloat { geometry.notchHeight }
-    private var expandedHeight: CGFloat {
+    private var expandedWidth:   CGFloat { max(geometry.notchWidth, 380) }
+    private var expandedHeight:  CGFloat {
         Self.estimatedExpandedBodyHeight(enabledProviderCount: enabledProviders.count)
     }
 
-    /// A deliberately generous estimate of `expandedBody`'s height, deterministic
-    /// from the enabled-provider count alone. `NotchHubController` calls this same
-    /// function (with the same provider count, read from config) to size the panel —
-    /// keeping one formula as the shared source of truth for both. Errs toward
-    /// slightly too tall rather than too short: a sliver of empty space at the bottom
-    /// is far less noticeable than clipped content.
+    /// Deterministic height estimate shared with `NotchHubController` so the panel
+    /// frame and the SwiftUI layout always agree. Errs slightly tall rather than short.
     static func estimatedExpandedBodyHeight(enabledProviderCount: Int) -> CGFloat {
-        let header: CGFloat = 40        // "USAGE" row + divider + top padding
-        let perRow: CGFloat = 62        // name + up to 2 countdown lines + trend line
-        let emptyState: CGFloat = 36    // "No providers enabled" placeholder
-        let footer: CGFloat = 40        // refresh/settings row + bottom padding
+        let header: CGFloat = 40
+        let perRow: CGFloat = 62
+        let emptyState: CGFloat = 36
+        let footer: CGFloat = 40
         let rows = enabledProviderCount > 0 ? CGFloat(enabledProviderCount) * perRow : emptyState
         return header + rows + footer
     }
 
     var body: some View {
+        // `.frame(maxWidth: .infinity, alignment: .center)` is critical: without it,
+        // NSHostingView left-aligns SwiftUI content. When the panel pre-expands to
+        // 380pt before the SwiftUI animation starts, the island would sit at the
+        // left edge instead of staying centered over the physical notch.
         island
+            .frame(maxWidth: .infinity, alignment: .center)
             .onAppear { layout.hoverHandler = { hovering in handleHover(hovering) } }
     }
 
@@ -85,29 +86,25 @@ struct NotchHubView: View {
     private func handleHover(_ hovering: Bool) {
         guard viewModel.config.notchExpandOnHover else { return }
         if hovering {
-            // The cursor entered — a pending sticky-close (if any) is moot.
             stickyCloseTask?.cancel()
             stickyCloseTask = nil
             guard !isExpanded else { return }
-            // Require a deliberate, held hover before expanding so the cursor
-            // merely crossing the menu bar on its way elsewhere doesn't trigger it.
             openIntentTask?.cancel()
             openIntentTask = Task { @MainActor in
+                // Immediately signal "charging up" so the island feels responsive
+                // even during the 350ms debounce delay.
+                withAnimation(.easeIn(duration: 0.12)) { isHoverIntending = true }
                 try? await Task.sleep(for: openIntentDelay)
                 guard !Task.isCancelled else { return }
-                // Resize the panel to its final expanded frame *before* the SwiftUI
-                // spring starts, so the window never has to chase the animation.
+                withAnimation(.easeOut(duration: 0.1)) { isHoverIntending = false }
                 layout.willExpand()
                 withAnimation(openAnimation) { isExpanded = true }
             }
         } else {
-            // The cursor left before the hover-intent delay elapsed — cancel the
-            // pending expand outright rather than expanding-then-immediately-closing.
             openIntentTask?.cancel()
             openIntentTask = nil
+            withAnimation(.easeOut(duration: 0.1)) { isHoverIntending = false }
             guard isExpanded else { return }
-            // Sticky close: stay open through brief exits (edge clipping, a
-            // trackpad finger slip) so the panel doesn't flicker shut and reopen.
             stickyCloseTask?.cancel()
             stickyCloseTask = Task { @MainActor in
                 try? await Task.sleep(for: stickyCloseDelay)
@@ -115,27 +112,14 @@ struct NotchHubView: View {
                 withAnimation(closeAnimation, completionCriteria: .logicallyComplete) {
                     isExpanded = false
                 } completion: {
-                    // Only shrink the panel back down once the close animation has
-                    // actually finished, so it's never smaller than the
-                    // still-visibly-animating-out content.
                     layout.didCollapse()
                 }
             }
         }
     }
 
-    /// Default look: the whole island (ears + dropdown) shares one width and widens
-    /// together on expand — boring.notch's and Apple's Dynamic Island's behavior.
-    /// Always present (never structurally inserted/removed) so the height change
-    /// between collapsed and expanded is a genuine animatable `.frame` value change,
-    /// not a structural insertion that only animates its own opacity/scale — that's
-    /// what made the surrounding shape look like it "snapped" rather than grew.
-    /// `expandedHeight` is a deterministic estimate (see below), not a
-    /// SwiftUI-measured value: in-tree measurement (GeometryReader/.fixedSize) turned
-    /// out to be unreliable here, because the root SwiftUI view can never report a
-    /// size larger than the actual NSPanel's *current* frame, which is the small
-    /// collapsed footprint — there is no escaping that from inside the view tree
-    /// while collapsed.
+    // MARK: Island variants
+
     private var standardIsland: some View {
         let radius = isExpanded ? expandedRadius : collapsedRadius
         return VStack(spacing: 0) {
@@ -147,20 +131,33 @@ struct NotchHubView: View {
                 .scaleEffect(isExpanded ? 1 : 0.97, anchor: .top)
         }
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
-        .background(NotchShape(bottomRadius: radius).fill(Color.black))
-        .contentShape(NotchShape(bottomRadius: radius))
+        .background(NotchShape(bottomCornerRadius: radius).fill(Color.black))
+        .overlay(
+            NotchShape(bottomCornerRadius: radius)
+                .fill(Color.white.opacity(isHoverIntending ? 0.07 : 0))
+                .allowsHitTesting(false)
+        )
+        // 1px black strip at the very top edge hides any sub-pixel antialiasing gap
+        // between the software shape and the physical hardware bezel.
+        .overlay(alignment: .top) {
+            Color.black.frame(height: 1).allowsHitTesting(false)
+        }
+        .contentShape(NotchShape(bottomCornerRadius: radius))
     }
 
-    /// Alternate look: the ears stay exactly `collapsedWidth` at all times — never
-    /// wider, never touching menu-bar space beyond what they already occupy — and
-    /// only the dropdown panel beneath widens, into the empty wallpaper area below
-    /// the menu bar rather than across it. Trades the continuous Dynamic-Island shape
-    /// for a smaller permanent footprint.
     private var compactIsland: some View {
         VStack(spacing: 0) {
             collapsedBar
                 .frame(width: collapsedWidth)
-                .background(NotchShape(bottomRadius: collapsedRadius).fill(Color.black))
+                .background(NotchShape(bottomCornerRadius: collapsedRadius).fill(Color.black))
+                .overlay(
+                    NotchShape(bottomCornerRadius: collapsedRadius)
+                        .fill(Color.white.opacity(isHoverIntending ? 0.07 : 0))
+                        .allowsHitTesting(false)
+                )
+                .overlay(alignment: .top) {
+                    Color.black.frame(height: 1).allowsHitTesting(false)
+                }
             expandedBody(rowsActive: isExpanded)
                 .frame(width: expandedWidth, height: isExpanded ? expandedHeight : 0, alignment: .top)
                 .clipped()
@@ -169,30 +166,19 @@ struct NotchHubView: View {
                 .scaleEffect(isExpanded ? 1 : 0.97, anchor: .top)
         }
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
-        // The only hit-testing shape in this tree — children above intentionally have
-        // none of their own (just `.background()` for looks).
         .contentShape(Rectangle())
     }
 
-    // MARK: Collapsed
+    // MARK: Collapsed bar
 
+    // A plain black bar that exactly covers the hardware notch. No content —
+    // the physical notch is a camera housing, not a status display.
     private var collapsedBar: some View {
-        HStack(spacing: 0) {
-            Spacer(minLength: geometry.notchWidth)   // reserve the camera gap
-        }
-        .frame(height: collapsedHeight)
+        Color.clear.frame(height: collapsedHeight)
     }
 
-    private func ear<Content: View>(alignment: Alignment, @ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .frame(width: earWidth - 10, alignment: alignment)
-    }
+    // MARK: Expanded body
 
-    // MARK: Expanded
-
-    /// `rowsActive` controls whether the per-second countdown ticks — pass `false`
-    /// for the invisible measuring copy in `island` (see there for why a second copy
-    /// exists at all) so it doesn't double the ticking cost for no visible benefit.
     private func expandedBody(rowsActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -207,8 +193,6 @@ struct NotchHubView: View {
             }
             .padding(.top, 2)
             Divider().overlay(Color.white.opacity(0.12))
-            // Show every enabled provider — even ones still waiting on data (e.g. a
-            // scaffolded provider) — so none silently disappear from the panel.
             ForEach(enabledProviders) { provider in
                 NotchProviderRow(
                     name: provider.name,
@@ -246,67 +230,15 @@ struct NotchHubView: View {
     private var enabledProviders: [ProviderDescriptor] {
         viewModel.config.providers.filter { $0.enabled }
     }
-
-    private var rows: [UsageSnapshot] {
-        enabledProviders.compactMap { viewModel.snapshots[$0.id] }
-    }
-
-    private var primarySnapshot: UsageSnapshot? {
-        if let id = viewModel.config.notchProviderID, let snap = viewModel.snapshots[id] { return snap }
-        return rows.first
-    }
-
-    private var primaryWindow: UsageQuotaWindow? {
-        primarySnapshot?.quotaWindows.first
-    }
-
-    private var primaryCountdown: String? {
-        guard let window = primaryWindow else { return nil }
-        return MenuQuotaPresenter.resetCountdown(window)
-    }
-
-    private func percentText(_ snap: UsageSnapshot) -> String {
-        if viewModel.config.hideUsageValuesEnabled { return StatusBarDisplayPresenter.maskedValueText }
-        if let pct = snap.remainingPercent ?? snap.quotaWindows.first?.remainingPercent {
-            return "\(Int(pct.rounded()))%"
-        }
-        return "—"
-    }
-
-    private func name(for id: String) -> String {
-        viewModel.config.providers.first(where: { $0.id == id })?.name ?? id
-    }
-
-    private func color(for snap: UsageSnapshot) -> Color {
-        let pct = viewModel.config.hideUsageValuesEnabled
-            ? nil
-            : (snap.remainingPercent ?? snap.quotaWindows.first?.remainingPercent)
-        guard snap.status == .ok, let pct else {
-            return Color(nsColor: NSColor(red: 0.55, green: 0.55, blue: 0.57, alpha: 1.0))
-        }
-        switch pct {
-        case ..<20:
-            return Color(nsColor: NSColor(red: 1.0, green: 0.18, blue: 0.33, alpha: 1.0))
-        case ..<50:
-            return Color(nsColor: NSColor(red: 1.0, green: 0.63, blue: 0.0, alpha: 1.0))
-        default:
-            return Color(nsColor: NSColor(red: 0.0, green: 0.90, blue: 0.46, alpha: 1.0))
-        }
-    }
 }
 
 
-/// One provider row in the expanded hub: dot, name, ring, percent, countdown.
-/// `snapshot` is optional so providers still waiting on data remain listed.
+/// One provider row in the expanded hub: ring, name, countdown, trend, percent.
 private struct NotchProviderRow: View {
     let name: String
     let snapshot: UsageSnapshot?
     let maskValues: Bool
     let trend: String?
-    /// Whether the hub is actually expanded right now. `expandedBody` (and this row
-    /// with it) is always present in the view tree so its height can be measured even
-    /// while collapsed — but with the row invisible, there's no reason to keep its
-    /// countdown ticking every second. Only the active (visible) row does that.
     let isActive: Bool
 
     @State private var animatedPercent: Double = 0
@@ -319,7 +251,6 @@ private struct NotchProviderRow: View {
     var body: some View {
         HStack(spacing: 10) {
             ring
-
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                 if !resetWindows.isEmpty {
@@ -333,8 +264,6 @@ private struct NotchProviderRow: View {
                 } else if let subtitle = subtitleText {
                     Text(subtitle).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 }
-                // Depletion pace — more actionable than the bare percent: "how much
-                // longer is this safe for" rather than just "where am I right now".
                 if let trend, !maskValues {
                     Text(trend)
                         .font(.system(size: 9, weight: .medium, design: .rounded))
@@ -360,19 +289,13 @@ private struct NotchProviderRow: View {
         }
         .frame(width: 22, height: 22)
         .onAppear {
-            withAnimation(.smooth(duration: 0.5).delay(0.05)) {
-                animatedPercent = percent ?? 0
-            }
+            withAnimation(.smooth(duration: 0.5).delay(0.05)) { animatedPercent = percent ?? 0 }
         }
         .onChange(of: percent) { _, newValue in
-            withAnimation(.smooth(duration: 0.5)) {
-                animatedPercent = newValue ?? 0
-            }
+            withAnimation(.smooth(duration: 0.5)) { animatedPercent = newValue ?? 0 }
         }
     }
 
-    /// Shared between the ticking (active) and static (inactive) render paths, so
-    /// gating the tick can never change this row's measured height.
     private func countdownStack(now: Date) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             ForEach(resetWindows.prefix(2)) { window in
@@ -380,8 +303,7 @@ private struct NotchProviderRow: View {
                     Image(systemName: "timer")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.4))
-                    Text(windowLabel(window))
-                        .foregroundStyle(.white.opacity(0.4))
+                    Text(windowLabel(window)).foregroundStyle(.white.opacity(0.4))
                     Text(MenuQuotaPresenter.liveResetCountdown(window, now: now) ?? "")
                         .foregroundStyle(.white.opacity(0.7))
                         .monospacedDigit()
@@ -392,13 +314,11 @@ private struct NotchProviderRow: View {
         }
     }
 
-    /// Subtitle when there are no reset windows: the snapshot's note, or a waiting hint.
     private var subtitleText: String? {
         guard let snapshot else { return "Waiting for data…" }
         return snapshot.note.isEmpty ? nil : snapshot.note
     }
 
-    /// Windows that carry a real reset clock, in display order.
     private var resetWindows: [UsageQuotaWindow] {
         snapshot?.quotaWindows.filter { $0.resetAt != nil } ?? []
     }
@@ -408,16 +328,18 @@ private struct NotchProviderRow: View {
     }
 
     private var ringColor: Color {
-        guard let snapshot, snapshot.status == .ok, let pct = percent else {
-            return Color(nsColor: NSColor(red: 0.55, green: 0.55, blue: 0.57, alpha: 1.0))
-        }
-        switch pct {
-        case ..<20:
-            return Color(nsColor: NSColor(red: 1.0, green: 0.18, blue: 0.33, alpha: 1.0))
-        case ..<50:
-            return Color(nsColor: NSColor(red: 1.0, green: 0.63, blue: 0.0, alpha: 1.0))
-        default:
-            return Color(nsColor: NSColor(red: 0.0, green: 0.90, blue: 0.46, alpha: 1.0))
-        }
+        notchStatusColor(remainingPercent: percent, isOk: snapshot?.status == .ok)
+    }
+}
+
+/// Three-tier health colour shared by all ring indicators in the hub.
+private func notchStatusColor(remainingPercent pct: Double?, isOk: Bool) -> Color {
+    guard isOk, let pct else {
+        return Color(nsColor: NSColor(red: 0.55, green: 0.55, blue: 0.57, alpha: 1.0))
+    }
+    switch pct {
+    case ..<20: return Color(nsColor: NSColor(red: 1.0, green: 0.18, blue: 0.33, alpha: 1.0))
+    case ..<50: return Color(nsColor: NSColor(red: 1.0, green: 0.63, blue: 0.0, alpha: 1.0))
+    default:    return Color(nsColor: NSColor(red: 0.0, green: 0.90, blue: 0.46, alpha: 1.0))
     }
 }

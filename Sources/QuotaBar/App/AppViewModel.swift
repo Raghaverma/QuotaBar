@@ -385,10 +385,13 @@ final class AppViewModel {
             do {
                 if let manifest = try await updateService.fetchLatestRelease(current: AppVersion.current) {
                     updateState = .available(manifest)
+                    // autoUpdateEnabled means the user wants hands-free updates:
+                    // notify first so they know what's happening, then install.
                     notificationService.postCustom(
-                        title: "Update Available",
-                        body: "Version \(manifest.version) is ready. Click to update."
+                        title: "Updating QuotaBar",
+                        body: "Downloading version \(manifest.version) and relaunching…"
                     )
+                    await installAvailableUpdate()
                 }
             } catch {
                 // Ignore silent update check errors
