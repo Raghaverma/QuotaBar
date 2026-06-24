@@ -69,6 +69,7 @@ struct AppConfig: Codable, Equatable, Sendable {
     var notchEnabled: Bool
     var notchProviderID: String?
     var notchExpandOnHover: Bool
+    var notchCompactWidth: Bool
     var autoUpdateEnabled: Bool
     var providers: [ProviderDescriptor]
 
@@ -87,6 +88,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         notchEnabled: Bool = true,
         notchProviderID: String? = nil,
         notchExpandOnHover: Bool = true,
+        notchCompactWidth: Bool = false,
         autoUpdateEnabled: Bool = true,
         providers: [ProviderDescriptor] = ProviderDefaultCatalog.seedProviders()
     ) {
@@ -104,6 +106,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         self.notchEnabled = notchEnabled
         self.notchProviderID = notchProviderID
         self.notchExpandOnHover = notchExpandOnHover
+        self.notchCompactWidth = notchCompactWidth
         self.autoUpdateEnabled = autoUpdateEnabled
         self.providers = providers
     }
@@ -115,7 +118,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         case hideUsageValuesEnabled
         case statusBarProviderID, statusBarMultiUsageEnabled, statusBarMultiProviderIDs
         case statusBarAppearanceMode, statusBarDisplayStyle, menuBarWidgetStyle
-        case notchEnabled, notchProviderID, notchExpandOnHover, autoUpdateEnabled, providers
+        case notchEnabled, notchProviderID, notchExpandOnHover, notchCompactWidth, autoUpdateEnabled, providers
     }
 
     init(from decoder: Decoder) throws {
@@ -134,6 +137,7 @@ struct AppConfig: Codable, Equatable, Sendable {
         notchEnabled = try c.decodeIfPresent(Bool.self, forKey: .notchEnabled) ?? true
         notchProviderID = try c.decodeIfPresent(String.self, forKey: .notchProviderID)
         notchExpandOnHover = try c.decodeIfPresent(Bool.self, forKey: .notchExpandOnHover) ?? true
+        notchCompactWidth = try c.decodeIfPresent(Bool.self, forKey: .notchCompactWidth) ?? false
         autoUpdateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUpdateEnabled) ?? true
         providers = try Self.decodeProvidersLossily(from: c)
     }

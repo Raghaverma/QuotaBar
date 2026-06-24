@@ -28,8 +28,8 @@ final class NotchHubController {
     private let layout = NotchLayoutBridge()
     private var screen: NSScreen?
     private var geometry: NotchGeometry?
-    private var measuredExpandedHeight: CGFloat?
     private var screenObserver: NSObjectProtocol?
+    private var hoverPollTask: Task<Void, Never>?
 
     // Mirrors NotchHubView's own layout constants (earWidth / minimum expanded width)
     // so the panel's deterministic collapsed/expanded frames match what SwiftUI will
@@ -41,7 +41,6 @@ final class NotchHubController {
         self.viewModel = viewModel
         self.onOpenSettings = onOpenSettings
 
-        layout.onMeasuredExpandedHeight = { [weak self] height in self?.measuredExpandedHeight = height }
         layout.onWillExpand = { [weak self] in self?.applyExpandedFrame() }
         layout.onDidCollapse = { [weak self] in self?.applyCollapsedFrame() }
 
@@ -84,7 +83,6 @@ final class NotchHubController {
         self.screen = screen
         let geometry = NotchGeometry.resolve(for: screen)
         self.geometry = geometry
-        measuredExpandedHeight = nil
 
         // The collapsed footprint is fully deterministic (geometry-derived), so the
         // panel starts at its exact final collapsed size — no measure-then-snap step.
@@ -103,21 +101,48 @@ final class NotchHubController {
         panel.setFrame(frame, display: true)
         panel.orderFrontRegardless()
         self.panel = panel
+        startHoverPolling()
     }
 
     private func teardown() {
+        hoverPollTask?.cancel()
+        hoverPollTask = nil
         panel?.orderOut(nil)
         panel = nil
     }
 
+    /// Polls `NSEvent.mouseLocation` against the panel's AppKit frame every 50ms and
+    /// fires `layout.hoverHandler` on state changes. This completely replaces SwiftUI's
+    /// `.onHover`, which breaks permanently after any `panel.setFrame()` call because
+    /// the underlying NSTrackingArea is invalidated and never recreated.
+    private func startHoverPolling() {
+        hoverPollTask?.cancel()
+        hoverPollTask = Task { @MainActor [weak self] in
+            var lastHovering = false
+            while !Task.isCancelled {
+                if let self, let panel = self.panel {
+                    let mouse = NSEvent.mouseLocation
+                    let isInside = panel.frame.contains(mouse)
+                    if isInside != lastHovering {
+                        lastHovering = isInside
+                        self.layout.hoverHandler?(isInside)
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+    }
+
     /// Resize to the expanded frame *before* the SwiftUI open animation starts, so the
     /// panel is already the right size when the spring begins — one resize, ahead of
-    /// the animation, instead of one per layout pass during it.
+    /// the animation, instead of one per layout pass during it. The height is the same
+    /// deterministic estimate `NotchHubView` uses for its own `.frame(height:)`
+    /// animation target, so the window and the SwiftUI content always agree.
     private func applyExpandedFrame() {
         guard let panel, let geometry else { return }
-        // Falls back to a generous estimate only on the very first expand of a
-        // session, before the SwiftUI side has ever reported a real measurement.
-        let height = collapsedHeight(for: geometry) + (measuredExpandedHeight ?? 200)
+        let providerCount = viewModel.config.providers.filter(\.enabled).count
+        let height = collapsedHeight(for: geometry)
+            + NotchHubView.estimatedExpandedBodyHeight(enabledProviderCount: providerCount)
         let size = CGSize(width: expandedWidth(for: geometry), height: height)
         panel.setFrame(panelFrame(on: screen, size: size), display: true)
     }

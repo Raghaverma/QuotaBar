@@ -11,7 +11,6 @@ struct NotchHubView: View {
     var layout: NotchLayoutBridge
 
     @State private var isExpanded = false
-    @State private var measuredExpandedBodyHeight: CGFloat = 0
     @State private var openIntentTask: Task<Void, Never>?
     @State private var stickyCloseTask: Task<Void, Never>?
 
@@ -40,30 +39,109 @@ struct NotchHubView: View {
     private var collapsedWidth: CGFloat { geometry.notchWidth + earWidth * 2 }
     private var expandedWidth: CGFloat { max(collapsedWidth, 380) }
     private var collapsedHeight: CGFloat { geometry.notchHeight }
+    private var expandedHeight: CGFloat {
+        Self.estimatedExpandedBodyHeight(enabledProviderCount: enabledProviders.count)
+    }
+
+    /// A deliberately generous estimate of `expandedBody`'s height, deterministic
+    /// from the enabled-provider count alone. `NotchHubController` calls this same
+    /// function (with the same provider count, read from config) to size the panel —
+    /// keeping one formula as the shared source of truth for both. Errs toward
+    /// slightly too tall rather than too short: a sliver of empty space at the bottom
+    /// is far less noticeable than clipped content.
+    static func estimatedExpandedBodyHeight(enabledProviderCount: Int) -> CGFloat {
+        let header: CGFloat = 40        // "USAGE" row + divider + top padding
+        let perRow: CGFloat = 62        // name + up to 2 countdown lines + trend line
+        let emptyState: CGFloat = 36    // "No providers enabled" placeholder
+        let footer: CGFloat = 40        // refresh/settings row + bottom padding
+        let rows = enabledProviderCount > 0 ? CGFloat(enabledProviderCount) * perRow : emptyState
+        return header + rows + footer
+    }
 
     var body: some View {
         island
+            .onAppear { layout.hoverHandler = { hovering in handleHover(hovering) } }
     }
 
+    @ViewBuilder
     private var island: some View {
+        if viewModel.config.notchCompactWidth {
+            compactIsland.onTapGesture { onOpenSettings() }
+        } else {
+            standardIsland.onTapGesture { onOpenSettings() }
+        }
+    }
+
+    /// Hover detection is driven from `NotchHubController` (which polls
+    /// `NSEvent.mouseLocation` against the panel's actual AppKit frame), not from
+    /// SwiftUI's `.onHover`. Empirically confirmed (via a one-shot debug log, not
+    /// guessed): resizing the NSPanel — which `applyExpandedFrame`/`applyCollapsedFrame`
+    /// do exactly twice per hover cycle, by design — silently breaks `.onHover`'s
+    /// underlying NSTrackingArea for the rest of that window's lifetime. The very
+    /// first hover after launch fires once; every hover after that first
+    /// resize never fires again, leaving the panel stuck in whatever state it was in.
+    /// Polling actual screen-space mouse coordinates at the AppKit level has no
+    /// dependency on tracking areas at all, so it can't be broken by resizing.
+    private func handleHover(_ hovering: Bool) {
+        guard viewModel.config.notchExpandOnHover else { return }
+        if hovering {
+            // The cursor entered — a pending sticky-close (if any) is moot.
+            stickyCloseTask?.cancel()
+            stickyCloseTask = nil
+            guard !isExpanded else { return }
+            // Require a deliberate, held hover before expanding so the cursor
+            // merely crossing the menu bar on its way elsewhere doesn't trigger it.
+            openIntentTask?.cancel()
+            openIntentTask = Task { @MainActor in
+                try? await Task.sleep(for: openIntentDelay)
+                guard !Task.isCancelled else { return }
+                // Resize the panel to its final expanded frame *before* the SwiftUI
+                // spring starts, so the window never has to chase the animation.
+                layout.willExpand()
+                withAnimation(openAnimation) { isExpanded = true }
+            }
+        } else {
+            // The cursor left before the hover-intent delay elapsed — cancel the
+            // pending expand outright rather than expanding-then-immediately-closing.
+            openIntentTask?.cancel()
+            openIntentTask = nil
+            guard isExpanded else { return }
+            // Sticky close: stay open through brief exits (edge clipping, a
+            // trackpad finger slip) so the panel doesn't flicker shut and reopen.
+            stickyCloseTask?.cancel()
+            stickyCloseTask = Task { @MainActor in
+                try? await Task.sleep(for: stickyCloseDelay)
+                guard !Task.isCancelled else { return }
+                withAnimation(closeAnimation, completionCriteria: .logicallyComplete) {
+                    isExpanded = false
+                } completion: {
+                    // Only shrink the panel back down once the close animation has
+                    // actually finished, so it's never smaller than the
+                    // still-visibly-animating-out content.
+                    layout.didCollapse()
+                }
+            }
+        }
+    }
+
+    /// Default look: the whole island (ears + dropdown) shares one width and widens
+    /// together on expand — boring.notch's and Apple's Dynamic Island's behavior.
+    /// Always present (never structurally inserted/removed) so the height change
+    /// between collapsed and expanded is a genuine animatable `.frame` value change,
+    /// not a structural insertion that only animates its own opacity/scale — that's
+    /// what made the surrounding shape look like it "snapped" rather than grew.
+    /// `expandedHeight` is a deterministic estimate (see below), not a
+    /// SwiftUI-measured value: in-tree measurement (GeometryReader/.fixedSize) turned
+    /// out to be unreliable here, because the root SwiftUI view can never report a
+    /// size larger than the actual NSPanel's *current* frame, which is the small
+    /// collapsed footprint — there is no escaping that from inside the view tree
+    /// while collapsed.
+    private var standardIsland: some View {
         let radius = isExpanded ? expandedRadius : collapsedRadius
         return VStack(spacing: 0) {
             collapsedBar
-            // `expandedBody` is *always* present in the tree (never structurally
-            // inserted/removed) so its natural height can always be measured via the
-            // background GeometryReader below, independent of the `.frame(height:)`
-            // clamp applied after it. That measurement is what lets the height
-            // actually animate smoothly between collapsed and expanded — a plain
-            // `if isExpanded { expandedBody }` only animates expandedBody's own
-            // opacity/scale transition, not the surrounding shape's height, which is
-            // what made the notch shape itself look like it "snapped" rather than grew.
-            expandedBody
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: ExpandedBodyHeightKey.self, value: proxy.size.height)
-                    }
-                )
-                .frame(height: isExpanded ? measuredExpandedBodyHeight : 0, alignment: .top)
+            expandedBody(rowsActive: isExpanded)
+                .frame(height: isExpanded ? expandedHeight : 0, alignment: .top)
                 .clipped()
                 .opacity(isExpanded ? 1 : 0)
                 .scaleEffect(isExpanded ? 1 : 0.97, anchor: .top)
@@ -71,95 +149,38 @@ struct NotchHubView: View {
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
         .background(NotchShape(bottomRadius: radius).fill(Color.black))
         .contentShape(NotchShape(bottomRadius: radius))
-        .onPreferenceChange(ExpandedBodyHeightKey.self) { height in
-            measuredExpandedBodyHeight = height
-            layout.reportExpandedHeight(height)
+    }
+
+    /// Alternate look: the ears stay exactly `collapsedWidth` at all times — never
+    /// wider, never touching menu-bar space beyond what they already occupy — and
+    /// only the dropdown panel beneath widens, into the empty wallpaper area below
+    /// the menu bar rather than across it. Trades the continuous Dynamic-Island shape
+    /// for a smaller permanent footprint.
+    private var compactIsland: some View {
+        VStack(spacing: 0) {
+            collapsedBar
+                .frame(width: collapsedWidth)
+                .background(NotchShape(bottomRadius: collapsedRadius).fill(Color.black))
+            expandedBody(rowsActive: isExpanded)
+                .frame(width: expandedWidth, height: isExpanded ? expandedHeight : 0, alignment: .top)
+                .clipped()
+                .background(RoundedRectangle(cornerRadius: expandedRadius, style: .continuous).fill(Color.black))
+                .opacity(isExpanded ? 1 : 0)
+                .scaleEffect(isExpanded ? 1 : 0.97, anchor: .top)
         }
-        .onHover { hovering in
-            guard viewModel.config.notchExpandOnHover else { return }
-            if hovering {
-                // The cursor entered — a pending sticky-close (if any) is moot.
-                stickyCloseTask?.cancel()
-                stickyCloseTask = nil
-                guard !isExpanded else { return }
-                // Require a deliberate, held hover before expanding so the cursor
-                // merely crossing the menu bar on its way elsewhere doesn't trigger it.
-                openIntentTask?.cancel()
-                openIntentTask = Task { @MainActor in
-                    try? await Task.sleep(for: openIntentDelay)
-                    guard !Task.isCancelled else { return }
-                    // Resize the panel to its final expanded frame *before* the SwiftUI
-                    // spring starts, so the window never has to chase the animation.
-                    layout.willExpand()
-                    withAnimation(openAnimation) { isExpanded = true }
-                }
-            } else {
-                // The cursor left before the hover-intent delay elapsed — cancel the
-                // pending expand outright rather than expanding-then-immediately-closing.
-                openIntentTask?.cancel()
-                openIntentTask = nil
-                guard isExpanded else { return }
-                // Sticky close: stay open through brief exits (edge clipping, a
-                // trackpad finger slip) so the panel doesn't flicker shut and reopen.
-                stickyCloseTask?.cancel()
-                stickyCloseTask = Task { @MainActor in
-                    try? await Task.sleep(for: stickyCloseDelay)
-                    guard !Task.isCancelled else { return }
-                    withAnimation(closeAnimation, completionCriteria: .logicallyComplete) {
-                        isExpanded = false
-                    } completion: {
-                        // Only shrink the panel back down once the close animation has
-                        // actually finished, so it's never smaller than the
-                        // still-visibly-animating-out content.
-                        layout.didCollapse()
-                    }
-                }
-            }
-        }
-        .onTapGesture { onOpenSettings() }
+        .frame(width: isExpanded ? expandedWidth : collapsedWidth)
+        // The only hit-testing shape in this tree — children above intentionally have
+        // none of their own (just `.background()` for looks).
+        .contentShape(Rectangle())
     }
 
     // MARK: Collapsed
 
     private var collapsedBar: some View {
         HStack(spacing: 0) {
-            ear(alignment: .leading) {
-                if let snap = primarySnapshot {
-                    HStack(spacing: 5) {
-                        Circle().fill(color(for: snap)).frame(width: 7, height: 7)
-                        Text(percentText(snap))
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white)
-                    }
-                }
-            }
             Spacer(minLength: geometry.notchWidth)   // reserve the camera gap
-            ear(alignment: .trailing) {
-                if let window = primaryWindow, window.resetAt != nil {
-                    // A live, per-second ticking countdown so the time-to-reset is
-                    // always accurate between data refreshes — not frozen at render.
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        HStack(spacing: 3) {
-                            Image(systemName: "timer")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.5))
-                            Text(MenuQuotaPresenter.liveResetCountdown(window, now: context.date) ?? "")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.78))
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                                .lineLimit(1)
-                        }
-                    }
-                } else if let snap = primarySnapshot {
-                    Text(snap.unit)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-            }
         }
         .frame(height: collapsedHeight)
-        .padding(.horizontal, 10)
     }
 
     private func ear<Content: View>(alignment: Alignment, @ViewBuilder _ content: () -> Content) -> some View {
@@ -169,7 +190,10 @@ struct NotchHubView: View {
 
     // MARK: Expanded
 
-    private var expandedBody: some View {
+    /// `rowsActive` controls whether the per-second countdown ticks — pass `false`
+    /// for the invisible measuring copy in `island` (see there for why a second copy
+    /// exists at all) so it doesn't double the ticking cost for no visible benefit.
+    private func expandedBody(rowsActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.fill")
@@ -191,7 +215,7 @@ struct NotchHubView: View {
                     snapshot: viewModel.snapshots[provider.id],
                     maskValues: viewModel.config.hideUsageValuesEnabled,
                     trend: viewModel.trendDescription(for: provider.id),
-                    isActive: isExpanded
+                    isActive: rowsActive
                 )
             }
             if enabledProviders.isEmpty {
@@ -271,15 +295,6 @@ struct NotchHubView: View {
     }
 }
 
-/// Reports `expandedBody`'s true natural height up to the controller — measured on
-/// the unconstrained view *before* the `.frame(height:)` clamp is applied, so the
-/// report stays accurate regardless of whether the hub is currently collapsed.
-private struct ExpandedBodyHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
 
 /// One provider row in the expanded hub: dot, name, ring, percent, countdown.
 /// `snapshot` is optional so providers still waiting on data remain listed.
