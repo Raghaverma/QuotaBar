@@ -3,30 +3,39 @@
 ## Automatic: push/merge to `Prod`
 
 Every push to the `Prod` branch (a direct push or a merged PR — both look the same
-to GitHub) triggers an `auto-tag` job that:
-- reads the highest existing `vX.Y.Z` tag,
-- bumps the **patch** number (`0.2.10` → `0.2.11`),
-- creates and pushes that tag.
+to GitHub) runs the `release` job directly (not a separate tagging job — see below
+for why), which:
+1. Resolves the next version by reading the highest existing `vX.Y.Z` tag and
+   bumping the **patch** number (`0.2.10` → `0.2.11`).
+2. Runs the same "Verify CI passed on this commit" gate as a manual tag push — if
+   `Build and Test (macOS)` hasn't passed on that commit, the run aborts here and
+   **no tag is created at all**.
+3. Only once that passes: creates and pushes the `vX.Y.Z` tag, then continues
+   straight on to build, sign/notarize, and publish — all in the same run.
 
-Pushing the tag is what actually produces the release — it fires the exact same
-`tags: v*` trigger described below, so it goes through the identical
-build/sign/notarize/publish path as a manual tag push, including the "Verify CI
-passed on this commit" gate (a release is *not* built if `Build and Test (macOS)`
-hasn't passed on that commit — the auto-tag still gets created either way, since
-that check happens downstream in the `release` job, but no DMG/ZIP/GitHub Release
-is published for a failing commit).
+An earlier version of this split step 1/3 into a separate `auto-tag` job and relied
+on its tag push triggering a second workflow run via the `tags: v*` event. That
+silently never worked: **GitHub does not let pushes made with the default
+`GITHUB_TOKEN` trigger further workflow runs** (an anti-recursion safeguard), so the
+tag got created but nothing ever built or published a release for it — `v0.2.11`
+shipped as a tag with no release attached. Doing tagging and publishing in one job
+sidesteps the problem instead of fighting it.
 
 Caveats:
 - Versioning is **patch-only and automatic** — there's no way to request a minor/major
   bump via a Prod push. For a minor/major release, push the tag yourself first
-  (`git tag vX.Y.0 && git push origin vX.Y.0`) — the auto-tag job only fires on a
-  branch push, so a manually-pushed tag is never overridden or duplicated by it.
+  (`git tag vX.Y.0 && git push origin vX.Y.0`).
 - If the repo has a **tag protection rule** restricting who/what can push tags
-  matching `v*` (Settings → Tags), the auto-tag job's push will fail — its identity
-  is the `github-actions[bot]` token, not a human collaborator.
+  matching `v*` (Settings → Tags), the tag push will fail — its identity is the
+  `github-actions[bot]` token, not a human collaborator.
 - Two pushes to `Prod` within seconds of each other could race on "what's the latest
-  tag" and both try to create the same next version; the second one to push loses
-  (visible as a failed `auto-tag` run) — rare in practice, not auto-retried.
+  tag" and both try to create the same next version; the second one to push the tag
+  loses (visible as a failed run) — rare in practice, not auto-retried.
+- If a Prod push's release run fails or is skipped (e.g. CI failed) after a tag from
+  an *earlier* attempt already exists, the next successful Prod push bumps from that
+  existing tag, not from the last *published* release — so a version number can end
+  up skipped (a tag with no release) rather than reused. Cosmetic only; delete the
+  orphaned tag (`git push origin --delete vX.Y.Z`) if it bothers you, or leave it.
 
 ## Manual: tag push or workflow_dispatch
 
