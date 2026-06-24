@@ -1,24 +1,24 @@
 import AppKit
 import SwiftUI
 
-/// Bridges the SwiftUI hub's expanded-content height and animation lifecycle up to
-/// the controller, which resizes the panel exactly twice per hover cycle — once right
-/// before the open animation starts, once right after the close animation finishes —
-/// rather than continuously while SwiftUI measures content mid-animation. See
-/// `NotchHubController` for why: resizing the real NSPanel on every layout pass during
-/// a spring animation is what produced the jitter this replaces (boring.notch avoids
-/// the problem differently, by never resizing at all; QuotaBar's content is
-/// variable-height per provider count, so it resizes, just only at the two instants
-/// nothing is actively animating).
+/// Bridges the SwiftUI hub's open/close animation lifecycle up to the controller,
+/// which resizes the panel exactly twice per hover cycle — once right before the open
+/// animation starts, once right after the close animation finishes — rather than
+/// continuously while SwiftUI animates. See `NotchHubController` for why: resizing the
+/// real NSPanel on every layout pass during a spring animation is what produced the
+/// jitter this replaces (boring.notch avoids the problem differently, by never
+/// resizing at all; QuotaBar's content is variable-height per provider count, so it
+/// resizes, just only at the two instants nothing is actively animating).
 /// A `@MainActor` class is implicitly `Sendable`, so it is safe to capture from
 /// SwiftUI's `@Sendable` preference-change closure.
 @MainActor
 final class NotchLayoutBridge {
-    var onMeasuredExpandedHeight: ((CGFloat) -> Void)?
     var onWillExpand: (() -> Void)?
     var onDidCollapse: (() -> Void)?
+    /// Set by the SwiftUI view in `.onAppear`; called by the controller's AppKit
+    /// mouse-location polling loop so hover detection survives NSPanel resizes.
+    var hoverHandler: ((Bool) -> Void)?
 
-    func reportExpandedHeight(_ height: CGFloat) { onMeasuredExpandedHeight?(height) }
     func willExpand() { onWillExpand?() }
     func didCollapse() { onDidCollapse?() }
 }

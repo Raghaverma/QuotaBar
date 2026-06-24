@@ -5,6 +5,11 @@ import SwiftUI
 struct NotchShape: Shape {
     var bottomRadius: CGFloat = 14
 
+    var animatableData: CGFloat {
+        get { bottomRadius }
+        set { bottomRadius = newValue }
+    }
+
     func path(in rect: CGRect) -> Path {
         let r = min(bottomRadius, min(rect.width, rect.height) / 2)
         var p = Path()

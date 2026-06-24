@@ -217,6 +217,13 @@ struct NotchSettingsView: View {
                                     subtitle: "Reveal the full panel when you hover")
                 }
                 .disabled(!viewModel.config.notchEnabled)
+
+                Toggle(isOn: compactWidthBinding) {
+                    SettingRowLabel(icon: "rectangle.compress.vertical", color: .teal,
+                                    title: "Keep ears narrow when expanded",
+                                    subtitle: "Only the dropdown panel below widens, not the ears themselves")
+                }
+                .disabled(!viewModel.config.notchEnabled)
             } header: {
                 Text("Behavior")
             }
@@ -236,6 +243,10 @@ struct NotchSettingsView: View {
     private var expandBinding: Binding<Bool> {
         Binding(get: { viewModel.config.notchExpandOnHover },
                 set: { newValue in viewModel.updateConfig { $0.notchExpandOnHover = newValue } })
+    }
+    private var compactWidthBinding: Binding<Bool> {
+        Binding(get: { viewModel.config.notchCompactWidth },
+                set: { newValue in viewModel.updateConfig { $0.notchCompactWidth = newValue } })
     }
 }
 
