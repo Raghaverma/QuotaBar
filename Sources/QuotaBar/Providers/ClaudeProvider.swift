@@ -238,13 +238,33 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "CLAUDE_CODE_OAUTH_TOKEN")
 
+        // `claude /usage` occasionally returns a truncated/partial render (transient CLI-side
+        // hiccup, not a credential or subscription problem) — one immediate retry clears most
+        // of those without surfacing a confusing error to the user.
+        do {
+            return try runClaudeCLIUsageOnce(executable: executable, environment: env)
+        } catch let error as ProviderError {
+            guard Self.isRetryableCLIFailure(error) else { throw error }
+            return try runClaudeCLIUsageOnce(executable: executable, environment: env)
+        }
+    }
+
+    private static func isRetryableCLIFailure(_ error: ProviderError) -> Bool {
+        if case .invalidResponse = error { return true }
+        return false
+    }
+
+    private func runClaudeCLIUsageOnce(executable: String, environment: [String: String]) throws -> UsageSnapshot {
         guard let result = Self.runCommand(
             executable: executable,
             arguments: ["/usage", "--allowed-tools", ""],
-            environment: env,
+            environment: environment,
             timeout: 25
         ) else {
             throw ProviderError.commandFailed("claude /usage failed to start")
+        }
+        if result.timedOut {
+            throw ProviderError.timeout("claude /usage took longer than 25s")
         }
 
         let combinedOutput = "\(result.stdout)\n\(result.stderr)"
@@ -263,7 +283,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
                 if let costResult = Self.runCommand(
                     executable: executable,
                     arguments: ["/cost", "--allowed-tools", ""],
-                    environment: env,
+                    environment: environment,
                     timeout: 25
                 ), !costResult.stdout.isEmpty {
                     return Self.parseClaudeCostOutput(costResult.stdout, descriptor: descriptor)
@@ -283,7 +303,9 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         }
 
         guard let sessionRemaining = extractClaudePercent(label: "Current session", text: clean) else {
-            throw ProviderError.invalidResponse("missing Claude current session usage")
+            let trimmed = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+            let snippet = String(trimmed.prefix(160)).replacingOccurrences(of: "\n", with: " / ")
+            throw ProviderError.invalidResponse("missing Claude current session usage (got: \"\(snippet)\")")
         }
 
         let weeklyRemaining = extractClaudePercent(label: "Current week", text: clean)
@@ -663,17 +685,63 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        // Drain both pipes as data arrives rather than after waitUntilExit(): a child that
+        // writes more than the OS pipe buffer (~64KB) before anyone reads will otherwise block
+        // on write() while we block on waitUntilExit() — a classic Process+Pipe deadlock.
+        let stdoutBox = PipeAccumulator()
+        let stderrBox = PipeAccumulator()
+        outPipe.fileHandleForReading.readabilityHandler = { handle in
+            stdoutBox.append(handle.availableData)
+        }
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            stderrBox.append(handle.availableData)
+        }
+
         do {
             try process.run()
-            process.waitUntilExit()
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-            let stdout = String(data: outData, encoding: .utf8) ?? ""
-            let stderr = String(data: errData, encoding: .utf8) ?? ""
-            return ShellCommandResult(stdout: stdout, stderr: stderr, status: process.terminationStatus)
         } catch {
+            outPipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
             return nil
         }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in semaphore.signal() }
+        let timedOut = semaphore.wait(timeout: .now() + timeout) == .timedOut
+        if timedOut {
+            process.terminate()
+            if semaphore.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+        }
+        process.waitUntilExit()
+
+        outPipe.fileHandleForReading.readabilityHandler = nil
+        errPipe.fileHandleForReading.readabilityHandler = nil
+
+        let stdout = String(data: stdoutBox.collected(), encoding: .utf8) ?? ""
+        let stderr = String(data: stderrBox.collected(), encoding: .utf8) ?? ""
+        return ShellCommandResult(stdout: stdout, stderr: stderr, status: process.terminationStatus, timedOut: timedOut)
+    }
+}
+
+/// Thread-safe byte accumulator for draining a `Pipe` concurrently with process execution.
+private final class PipeAccumulator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    func collected() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
     }
 }
 
@@ -683,6 +751,7 @@ private struct ShellCommandResult {
     let stdout: String
     let stderr: String
     let status: Int32
+    let timedOut: Bool
 }
 
 // MARK: - Value Parsing Helper

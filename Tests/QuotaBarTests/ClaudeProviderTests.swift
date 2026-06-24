@@ -89,4 +89,27 @@ final class ClaudeProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .session })?.remainingPercent, 45)
         XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .weekly })?.remainingPercent, 80)
     }
+
+    func testClaudeCLIParsingMatchesCurrentCLIOutputFormat() throws {
+        let cliOutput = """
+        You are currently using your subscription to power your Claude Code usage
+
+        Current session: 52% used \u{B7} resets Jun 24 at 11:30pm (Asia/Calcutta)
+        Current week (all models): 6% used \u{B7} resets Jul 1 at 4:30pm (Asia/Calcutta)
+        """
+
+        let snapshot = try ClaudeProvider.parseClaudeCLIOutput(cliOutput, descriptor: Self.defaultOfficialClaude())
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .session })?.remainingPercent, 48)
+        XCTAssertEqual(snapshot.quotaWindows.first(where: { $0.kind == .weekly })?.remainingPercent, 94)
+    }
+
+    func testClaudeCLIParsingFailureIncludesOutputSnippetForDiagnosis() {
+        let cliOutput = "Checking for updates...\nNetwork error, please try again."
+        XCTAssertThrowsError(
+            try ClaudeProvider.parseClaudeCLIOutput(cliOutput, descriptor: Self.defaultOfficialClaude())
+        ) { error in
+            let message = (error as? LocalizedError)?.errorDescription ?? ""
+            XCTAssertTrue(message.contains("Network error"), "expected diagnostic snippet in: \(message)")
+        }
+    }
 }

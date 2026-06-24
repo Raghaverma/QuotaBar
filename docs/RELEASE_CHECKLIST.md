@@ -1,5 +1,35 @@
 # Release checklist
 
+## Automatic: push/merge to `Prod`
+
+Every push to the `Prod` branch (a direct push or a merged PR — both look the same
+to GitHub) triggers an `auto-tag` job that:
+- reads the highest existing `vX.Y.Z` tag,
+- bumps the **patch** number (`0.2.10` → `0.2.11`),
+- creates and pushes that tag.
+
+Pushing the tag is what actually produces the release — it fires the exact same
+`tags: v*` trigger described below, so it goes through the identical
+build/sign/notarize/publish path as a manual tag push, including the "Verify CI
+passed on this commit" gate (a release is *not* built if `Build and Test (macOS)`
+hasn't passed on that commit — the auto-tag still gets created either way, since
+that check happens downstream in the `release` job, but no DMG/ZIP/GitHub Release
+is published for a failing commit).
+
+Caveats:
+- Versioning is **patch-only and automatic** — there's no way to request a minor/major
+  bump via a Prod push. For a minor/major release, push the tag yourself first
+  (`git tag vX.Y.0 && git push origin vX.Y.0`) — the auto-tag job only fires on a
+  branch push, so a manually-pushed tag is never overridden or duplicated by it.
+- If the repo has a **tag protection rule** restricting who/what can push tags
+  matching `v*` (Settings → Tags), the auto-tag job's push will fail — its identity
+  is the `github-actions[bot]` token, not a human collaborator.
+- Two pushes to `Prod` within seconds of each other could race on "what's the latest
+  tag" and both try to create the same next version; the second one to push loses
+  (visible as a failed `auto-tag` run) — rare in practice, not auto-retried.
+
+## Manual: tag push or workflow_dispatch
+
 1. **Green build** — `swift build && swift test` passes locally (use
    `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` if needed).
 2. **Bump the version** — set `VERSION` (or pass `APP_VERSION`). Use semantic
@@ -15,6 +45,9 @@
    - re-fetches the published `latest.json` and asserts the version matches.
 5. **Verify the update loop** — a prior install should detect the new version via
    `AppUpdateService.fetchLatestRelease(current:)`.
+
+(`workflow_dispatch` with an explicit version input works the same way, useful for
+re-running a release without creating a new tag.)
 
 ## Signing & notarization
 
