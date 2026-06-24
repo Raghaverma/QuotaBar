@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - Prod
   workflow_dispatch:
     inputs:
       version:
@@ -18,8 +20,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Fires only on a push to Prod (a direct push or a merged PR both show up as this
+  # event). Computes the next patch version from the highest existing `vX.Y.Z` tag and
+  # pushes that tag — nothing else. Pushing the tag is what actually triggers the real
+  # build: it creates a brand new `tags: v*` event, which is a separate workflow run
+  # that the `release` job below handles exactly as it always has for a manually
+  # pushed tag. This job intentionally does no building itself, so there is exactly
+  # one place ("release") that knows how to produce a release, whether triggered by
+  # this auto-tag, a manual tag push, or workflow_dispatch.
+  auto-tag:
+    name: Auto-tag on Prod push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/Prod'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full tag history to find the latest vX.Y.Z
+
+      - name: Compute Next Version
+        id: next
+        run: |
+          git fetch origin --tags --force
+          LATEST=$(git tag -l 'v*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          if [ -z "$LATEST" ]; then
+            LATEST="0.0.0"
+          fi
+          MAJOR=$(echo "$LATEST" | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | cut -d. -f3)
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "Latest tag: v$LATEST -> next: v$NEXT"
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Create & Push Tag
+        run: |
+          TAG="v${{ steps.next.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
   release:
     name: Build & Publish Release
+    needs: [auto-tag]
+    # Always evaluated regardless of auto-tag's outcome (it's skipped outright on a
+    # tag-push/workflow_dispatch run, which would otherwise skip this job too) — the
+    # actual gate is the tag-push / workflow_dispatch check itself.
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
     runs-on: macos-latest
     steps:
       - name: Checkout Code
