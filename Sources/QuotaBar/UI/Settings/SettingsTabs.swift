@@ -370,7 +370,7 @@ struct HistorySettingsView: View {
     @State private var rangeDays = 1
 
     private struct Point: Identifiable {
-        let id: Int
+        var id: Date { date }
         let date: Date
         let value: Double
     }
@@ -420,6 +420,39 @@ struct HistorySettingsView: View {
                     .frame(height: 240)
                 }
             }
+
+            if providerID != nil {
+                Section("Daily consumption") {
+                    if dailyConsumption.contains(where: { $0.consumedPoints > 0 }) {
+                        Chart(dailyConsumption) { day in
+                            BarMark(
+                                x: .value("Day", day.day, unit: .day),
+                                y: .value("Used", day.consumedPoints)
+                            )
+                            .foregroundStyle(.orange.gradient)
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .stride(by: .day)) { _ in
+                                AxisValueLabel(format: .dateTime.weekday(.abbreviated))
+                            }
+                        }
+                        .frame(height: 160)
+
+                        HStack {
+                            statLabel("Used today", points: dailyConsumption.last?.consumedPoints ?? 0)
+                            Spacer()
+                            statLabel("Used this week", points: dailyConsumption.reduce(0) { $0 + $1.consumedPoints })
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "Not Enough History",
+                            systemImage: "chart.bar.xaxis",
+                            description: Text("Daily totals appear after a few days of recorded refreshes.")
+                        )
+                        .frame(height: 160)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("History")
@@ -428,20 +461,24 @@ struct HistorySettingsView: View {
         }
     }
 
-    private var points: [Point] {
-        guard let providerID,
-              let provider = viewModel.config.providers.first(where: { $0.id == providerID }) else { return [] }
-        let interval = max(provider.pollIntervalSec, viewModel.config.resourceMode.backgroundPollIntervalSeconds)
-        let maxSamples = max(1, rangeDays * 24 * 3600 / interval)
-        let values = Array((viewModel.usageHistory[providerID] ?? []).suffix(maxSamples))
-        let now = Date()
-        return values.enumerated().map { index, value in
-            Point(
-                id: index,
-                date: now.addingTimeInterval(Double(index - values.count + 1) * Double(interval)),
-                value: value
-            )
+    private func statLabel(_ title: String, points: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text("\(Int(points.rounded())) pts").font(.title3.bold())
         }
+    }
+
+    private var points: [Point] {
+        guard let providerID else { return [] }
+        let cutoff = Date().addingTimeInterval(-Double(rangeDays) * 86_400)
+        return (viewModel.usageHistory[providerID] ?? [])
+            .filter { $0.at >= cutoff }
+            .map { Point(date: $0.at, value: $0.remainingPercent) }
+    }
+
+    private var dailyConsumption: [AppViewModel.DailyConsumption] {
+        guard let providerID else { return [] }
+        return viewModel.dailyConsumption(for: providerID, days: 7)
     }
 }
 

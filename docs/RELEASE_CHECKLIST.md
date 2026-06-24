@@ -22,3 +22,42 @@
 - For Developer ID: set `DEVELOPER_ID_APPLICATION` (or `CODESIGN_IDENTITY`).
 - For notarization: `NOTARIZE_DMG=1` plus `NOTARYTOOL_PROFILE` (a stored
   `notarytool` keychain profile).
+
+### Enabling it in CI (release.yml)
+
+`release.yml` already checks for these four repo secrets and, if present,
+signs with your Developer ID and notarizes automatically — no workflow edits
+needed. If they're absent it silently falls back to today's ad-hoc-signed
+release (a `::notice::` in the job log says so). One-time setup, requires an
+**Apple Developer Program membership** ($99/yr — only you can do this part):
+
+1. **Enroll** at [developer.apple.com/programs](https://developer.apple.com/programs/)
+   if you haven't already.
+2. **Create a Developer ID Application certificate**: Xcode → Settings →
+   Accounts → your team → Manage Certificates → "+" → *Developer ID
+   Application*. (Or via [developer.apple.com/account/resources/certificates](https://developer.apple.com/account/resources/certificates/list).)
+3. **Export it as a `.p12`**: open Keychain Access, find the new certificate
+   under *My Certificates*, right-click → Export, set a password — this
+   password is `MACOS_CERTIFICATE_PASSWORD` below.
+4. **Base64-encode it** for the secret: `base64 -i Certificate.p12 | pbcopy`.
+5. **Create an app-specific password** for notarytool at
+   [appleid.apple.com](https://appleid.apple.com/) → Sign-In and Security →
+   App-Specific Passwords. This is `MACOS_NOTARIZATION_PASSWORD` — not your
+   regular Apple ID password.
+6. **Find your Team ID**: [developer.apple.com/account](https://developer.apple.com/account/#/membership) (top right, under your name).
+7. **Add four repo secrets** (Settings → Secrets and variables → Actions):
+
+   | Secret | Value |
+   | --- | --- |
+   | `MACOS_CERTIFICATE_P12` | output of step 4 |
+   | `MACOS_CERTIFICATE_PASSWORD` | the export password from step 3 |
+   | `MACOS_NOTARIZATION_APPLE_ID` | your Apple ID email |
+   | `MACOS_NOTARIZATION_TEAM_ID` | your Team ID from step 6 |
+   | `MACOS_NOTARIZATION_PASSWORD` | the app-specific password from step 5 |
+
+   (Five rows, four distinct secret *names* used by the workflow — the
+   certificate and its password are two separate secrets.)
+
+Once those exist, the next tag push produces a Developer ID–signed,
+notarized, stapled DMG/ZIP automatically, and users stop seeing the
+"unidentified developer" Gatekeeper warning in the README's install steps.

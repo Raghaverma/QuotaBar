@@ -22,8 +22,19 @@ final class ReliabilityTests: XCTestCase {
     func testHistoryPersistsAcrossStoreInstances() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
-        try HistoryStore(baseDirectoryURL: directory).save(["codex": [90, 75, 50]])
-        XCTAssertEqual(try HistoryStore(baseDirectoryURL: directory).load()["codex"], [90, 75, 50])
+        let samples = [90.0, 75.0, 50.0].enumerated().map { index, value in
+            HistorySample(at: Date(timeIntervalSince1970: Double(index) * 60), remainingPercent: value)
+        }
+        try HistoryStore(baseDirectoryURL: directory).save(["codex": samples])
+        XCTAssertEqual(try HistoryStore(baseDirectoryURL: directory).load()["codex"], samples)
+    }
+
+    func testHistoryLoadIgnoresPreTimestampFormat() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacyJSON = #"{"codex":[90,75,50]}"#
+        try Data(legacyJSON.utf8).write(to: directory.appendingPathComponent("usage-history.json"))
+        XCTAssertEqual(try HistoryStore(baseDirectoryURL: directory).load(), [:])
     }
 
     func testAtomicCredentialWriterCreatesBackupAndPreservesPermissions() throws {

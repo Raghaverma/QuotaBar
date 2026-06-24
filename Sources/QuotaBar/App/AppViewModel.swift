@@ -22,8 +22,8 @@ final class AppViewModel {
     var userFacingError: UserFacingError?
     private(set) var lastLoadWasLossy: Bool
 
-    /// Rolling per-provider remaining-percent history that feeds the sparkline widget.
-    private(set) var usageHistory: [String: [Double]] = [:]
+    /// Rolling per-provider history that feeds the sparkline widget and trend charts.
+    private(set) var usageHistory: [String: [HistorySample]] = [:]
     /// Roughly one week at the default five-minute cadence.
     private let maxHistory = 2_016
 
@@ -154,7 +154,7 @@ final class AppViewModel {
     private func recordHistory(id: String, snapshot: UsageSnapshot) {
         guard let pct = snapshot.remainingPercent ?? snapshot.quotaWindows.first?.remainingPercent else { return }
         var series = usageHistory[id] ?? []
-        series.append(pct)
+        series.append(HistorySample(at: snapshot.updatedAt, remainingPercent: pct))
         if series.count > maxHistory { series.removeFirst(series.count - maxHistory) }
         usageHistory[id] = series
         do {
@@ -316,21 +316,60 @@ final class AppViewModel {
     func trendDescription(for providerID: String) -> String? {
         guard let values = usageHistory[providerID], values.count >= 2,
               let first = values.first, let last = values.last else { return nil }
-        let delta = last - first
+        let delta = last.remainingPercent - first.remainingPercent
         if abs(delta) < 1 { return "Stable recently" }
         guard delta < 0 else { return "\(Int(delta.rounded())) points recovered recently" }
-        let consumedPerSample = abs(delta) / Double(max(1, values.count - 1))
-        guard consumedPerSample > 0,
-              let provider = config.providers.first(where: { $0.id == providerID }) else {
+
+        // Real elapsed wall-clock time between the two samples — not an assumed
+        // constant poll interval, which drifts whenever a refresh is skipped, slept
+        // through, or its interval changes.
+        let elapsedSeconds = last.at.timeIntervalSince(first.at)
+        guard elapsedSeconds > 0 else {
             return "\(Int(abs(delta).rounded())) points consumed recently"
         }
-        let samplesRemaining = last / consumedPerSample
-        let interval = max(provider.pollIntervalSec, config.resourceMode.backgroundPollIntervalSeconds)
-        let hoursRemaining = samplesRemaining * Double(interval) / 3600
-        let estimate = hoursRemaining < 1
-            ? "\(max(1, Int((hoursRemaining * 60).rounded())))m"
-            : "\(Int(hoursRemaining.rounded()))h"
+        let consumedPerSecond = abs(delta) / elapsedSeconds
+        guard consumedPerSecond > 0 else {
+            return "\(Int(abs(delta).rounded())) points consumed recently"
+        }
+        let secondsRemaining = last.remainingPercent / consumedPerSecond
+        let estimate = Self.formatDuration(seconds: secondsRemaining)
         return "\(Int(abs(delta).rounded())) points consumed recently · ~\(estimate) at this pace"
+    }
+
+    private static func formatDuration(seconds: Double) -> String {
+        let hours = seconds / 3600
+        if hours < 1 { return "\(max(1, Int((hours * 60).rounded())))m" }
+        if hours < 48 { return "\(Int(hours.rounded()))h" }
+        return "\(String(format: "%.1f", hours / 24))d"
+    }
+
+    /// One calendar day's consumed points (`Calendar.current`, device-local). Only
+    /// counts decreases between consecutive samples, so a quota reset (which makes the
+    /// remaining-percent jump back up) is never miscounted as negative consumption.
+    struct DailyConsumption: Identifiable {
+        var id: Date { day }
+        var day: Date
+        var consumedPoints: Double
+    }
+
+    /// Zero-filled for every day in range, oldest first, so the chart always shows a
+    /// stable `days`-wide window rather than collapsing on sparse history.
+    func dailyConsumption(for providerID: String, days: Int = 7) -> [DailyConsumption] {
+        let calendar = Calendar.current
+        var totals: [Date: Double] = [:]
+        if let samples = usageHistory[providerID], samples.count >= 2 {
+            for (prev, curr) in zip(samples, samples.dropFirst()) {
+                let drop = prev.remainingPercent - curr.remainingPercent
+                guard drop > 0 else { continue }
+                let day = calendar.startOfDay(for: curr.at)
+                totals[day, default: 0] += drop
+            }
+        }
+        let today = calendar.startOfDay(for: Date())
+        return (0..<days).reversed().map { offset in
+            let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
+            return DailyConsumption(day: day, consumedPoints: totals[day] ?? 0)
+        }
     }
 
     private func report(title: String, error: Error) {

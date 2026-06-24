@@ -15,6 +15,24 @@ Say goodbye to hunting down usage stats across a dozen browser tabs: with QuotaB
 
 [Features](#-roadmap) · [Installation](#installation) · [Building from Source](#building-from-source) · [Contributing](#-contributing)
 
+<!--
+  HERO SCREENSHOT — replace this with a real capture before merging.
+  Goal: one image, ~1280px wide, that shows the menu bar widget, the expanded
+  notch hub, and the Settings window in the same shot (composite if needed) so a
+  visitor understands what the app is within one glance, before reading anything.
+  Save as docs/screenshots/hero.png and update the path below.
+-->
+<img src="docs/screenshots/hero.png" alt="QuotaBar menu bar widget, expanded notch hub, and Settings window showing live AI quota usage" width="800">
+
+<!--
+  DEMO GIF — replace this with a real capture before merging.
+  Goal: ~8-10s loop — hover the notch, watch it expand, show 2-3 provider rows
+  with live reset countdowns, then move away and watch it collapse. This single
+  GIF sells the app faster than any text on this page.
+  Save as docs/screenshots/demo.gif and update the path below.
+-->
+<img src="docs/screenshots/demo.gif" alt="QuotaBar notch hub expanding on hover to reveal live AI usage quotas and reset countdowns" width="800">
+
 </div>
 
 ## Installation

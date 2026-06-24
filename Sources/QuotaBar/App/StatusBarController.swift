@@ -48,7 +48,7 @@ final class StatusBarController {
         statusItem.render(
             entries: entries,
             style: viewModel.config.menuBarWidgetStyle,
-            history: viewModel.usageHistory,
+            history: viewModel.usageHistory.mapValues { $0.map(\.remainingPercent) },
             appearanceDark: dark
         )
     }

@@ -11,7 +11,9 @@ struct NotchHubView: View {
     var layout: NotchLayoutBridge
 
     @State private var isExpanded = false
-    @State private var hoverTask: Task<Void, Never>?
+    @State private var measuredExpandedBodyHeight: CGFloat = 0
+    @State private var openIntentTask: Task<Void, Never>?
+    @State private var stickyCloseTask: Task<Void, Never>?
 
     // Spring parameters matched to boring.notch's feel: springy open, critically
     // damped close so it snaps shut without bouncing.
@@ -21,6 +23,13 @@ struct NotchHubView: View {
     private var closeAnimation: Animation {
         .spring(response: 0.35, dampingFraction: 1.0, blendDuration: 0)
     }
+
+    // A mouse just passing over the island (moving across the menu bar, say)
+    // shouldn't trigger it — only a deliberate, held hover should. Closing is the
+    // opposite: stay open through brief exits (a finger slipping off the trackpad,
+    // the cursor clipping the edge) so the panel doesn't flicker shut and reopen.
+    private let openIntentDelay: Duration = .milliseconds(350)
+    private let stickyCloseDelay: Duration = .milliseconds(1000)
 
     /// Bottom-corner radius of the physical notch; the collapsed island matches it so
     /// the painted ears read as a seamless continuation of the bezel.
@@ -33,46 +42,77 @@ struct NotchHubView: View {
     private var collapsedHeight: CGFloat { geometry.notchHeight }
 
     var body: some View {
-        // The island measures its own intrinsic size and reports it up so the panel
-        // can shrink to fit. No outer fill/frame — the window is exactly the island.
         island
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(key: IslandSizePreferenceKey.self, value: proxy.size)
-                }
-            )
-            .onPreferenceChange(IslandSizePreferenceKey.self) { size in
-                let measured = size
-                Task { @MainActor in layout.report(measured) }
-            }
     }
 
     private var island: some View {
         let radius = isExpanded ? expandedRadius : collapsedRadius
         return VStack(spacing: 0) {
             collapsedBar
-            if isExpanded {
-                expandedBody
-                    // Scale-from-top + fade avoids the slide-from-above clipping issue.
-                    .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
-            }
+            // `expandedBody` is *always* present in the tree (never structurally
+            // inserted/removed) so its natural height can always be measured via the
+            // background GeometryReader below, independent of the `.frame(height:)`
+            // clamp applied after it. That measurement is what lets the height
+            // actually animate smoothly between collapsed and expanded — a plain
+            // `if isExpanded { expandedBody }` only animates expandedBody's own
+            // opacity/scale transition, not the surrounding shape's height, which is
+            // what made the notch shape itself look like it "snapped" rather than grew.
+            expandedBody
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ExpandedBodyHeightKey.self, value: proxy.size.height)
+                    }
+                )
+                .frame(height: isExpanded ? measuredExpandedBodyHeight : 0, alignment: .top)
+                .clipped()
+                .opacity(isExpanded ? 1 : 0)
+                .scaleEffect(isExpanded ? 1 : 0.97, anchor: .top)
         }
         .frame(width: isExpanded ? expandedWidth : collapsedWidth)
         .background(NotchShape(bottomRadius: radius).fill(Color.black))
         .contentShape(NotchShape(bottomRadius: radius))
+        .onPreferenceChange(ExpandedBodyHeightKey.self) { height in
+            measuredExpandedBodyHeight = height
+            layout.reportExpandedHeight(height)
+        }
         .onHover { hovering in
             guard viewModel.config.notchExpandOnHover else { return }
-            hoverTask?.cancel()
             if hovering {
-                // Expand immediately with a springy open animation.
-                withAnimation(openAnimation) { isExpanded = true }
-            } else {
-                // Debounce collapse: a 150 ms grace period prevents flicker when
-                // the cursor briefly clips the island edge mid-gesture.
-                hoverTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(150))
+                // The cursor entered — a pending sticky-close (if any) is moot.
+                stickyCloseTask?.cancel()
+                stickyCloseTask = nil
+                guard !isExpanded else { return }
+                // Require a deliberate, held hover before expanding so the cursor
+                // merely crossing the menu bar on its way elsewhere doesn't trigger it.
+                openIntentTask?.cancel()
+                openIntentTask = Task { @MainActor in
+                    try? await Task.sleep(for: openIntentDelay)
                     guard !Task.isCancelled else { return }
-                    withAnimation(closeAnimation) { isExpanded = false }
+                    // Resize the panel to its final expanded frame *before* the SwiftUI
+                    // spring starts, so the window never has to chase the animation.
+                    layout.willExpand()
+                    withAnimation(openAnimation) { isExpanded = true }
+                }
+            } else {
+                // The cursor left before the hover-intent delay elapsed — cancel the
+                // pending expand outright rather than expanding-then-immediately-closing.
+                openIntentTask?.cancel()
+                openIntentTask = nil
+                guard isExpanded else { return }
+                // Sticky close: stay open through brief exits (edge clipping, a
+                // trackpad finger slip) so the panel doesn't flicker shut and reopen.
+                stickyCloseTask?.cancel()
+                stickyCloseTask = Task { @MainActor in
+                    try? await Task.sleep(for: stickyCloseDelay)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(closeAnimation, completionCriteria: .logicallyComplete) {
+                        isExpanded = false
+                    } completion: {
+                        // Only shrink the panel back down once the close animation has
+                        // actually finished, so it's never smaller than the
+                        // still-visibly-animating-out content.
+                        layout.didCollapse()
+                    }
                 }
             }
         }
@@ -146,7 +186,13 @@ struct NotchHubView: View {
             // Show every enabled provider — even ones still waiting on data (e.g. a
             // scaffolded provider) — so none silently disappear from the panel.
             ForEach(enabledProviders) { provider in
-                NotchProviderRow(name: provider.name, snapshot: viewModel.snapshots[provider.id], maskValues: viewModel.config.hideUsageValuesEnabled)
+                NotchProviderRow(
+                    name: provider.name,
+                    snapshot: viewModel.snapshots[provider.id],
+                    maskValues: viewModel.config.hideUsageValuesEnabled,
+                    trend: viewModel.trendDescription(for: provider.id),
+                    isActive: isExpanded
+                )
             }
             if enabledProviders.isEmpty {
                 Text("No providers enabled")
@@ -225,11 +271,12 @@ struct NotchHubView: View {
     }
 }
 
-/// Reports the island's measured size up to the controller so the panel can be sized
-/// to fit it exactly (and resized as it expands/collapses).
-private struct IslandSizePreferenceKey: PreferenceKey {
-    static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+/// Reports `expandedBody`'s true natural height up to the controller — measured on
+/// the unconstrained view *before* the `.frame(height:)` clamp is applied, so the
+/// report stays accurate regardless of whether the hub is currently collapsed.
+private struct ExpandedBodyHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
 }
@@ -240,6 +287,12 @@ private struct NotchProviderRow: View {
     let name: String
     let snapshot: UsageSnapshot?
     let maskValues: Bool
+    let trend: String?
+    /// Whether the hub is actually expanded right now. `expandedBody` (and this row
+    /// with it) is always present in the view tree so its height can be measured even
+    /// while collapsed — but with the row invisible, there's no reason to keep its
+    /// countdown ticking every second. Only the active (visible) row does that.
+    let isActive: Bool
 
     @State private var animatedPercent: Double = 0
 
@@ -250,55 +303,77 @@ private struct NotchProviderRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ZStack {
-                Circle().stroke(Color.white.opacity(0.15), lineWidth: 3)
-                Circle()
-                    .trim(from: 0, to: CGFloat(animatedPercent / 100))
-                    .stroke(ringColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 22, height: 22)
-            .onAppear {
-                withAnimation(.smooth(duration: 0.5).delay(0.05)) {
-                    animatedPercent = percent ?? 0
-                }
-            }
-            .onChange(of: percent) { _, newValue in
-                withAnimation(.smooth(duration: 0.5)) {
-                    animatedPercent = newValue ?? 0
-                }
-            }
+            ring
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                 if !resetWindows.isEmpty {
-                    // Live, per-second countdown for each window's reset clock.
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        VStack(alignment: .leading, spacing: 1) {
-                            ForEach(resetWindows.prefix(2)) { window in
-                                HStack(spacing: 4) {
-                                    Image(systemName: "timer")
-                                        .font(.system(size: 8, weight: .semibold))
-                                        .foregroundStyle(.white.opacity(0.4))
-                                    Text(windowLabel(window))
-                                        .foregroundStyle(.white.opacity(0.4))
-                                    Text(MenuQuotaPresenter.liveResetCountdown(window, now: context.date) ?? "")
-                                        .foregroundStyle(.white.opacity(0.7))
-                                        .monospacedDigit()
-                                        .contentTransition(.numericText())
-                                }
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                            }
+                    if isActive {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            countdownStack(now: context.date)
                         }
+                    } else {
+                        countdownStack(now: Date())
                     }
                 } else if let subtitle = subtitleText {
                     Text(subtitle).font(.system(size: 10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
+                }
+                // Depletion pace — more actionable than the bare percent: "how much
+                // longer is this safe for" rather than just "where am I right now".
+                if let trend, !maskValues {
+                    Text(trend)
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.35))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
             Spacer()
             Text(maskValues ? StatusBarDisplayPresenter.maskedValueText : (percent.map { "\(Int($0.rounded()))%" } ?? "—"))
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(percent == nil ? .white.opacity(0.4) : .white)
+        }
+    }
+
+    private var ring: some View {
+        ZStack {
+            Circle().stroke(Color.white.opacity(0.15), lineWidth: 3)
+            Circle()
+                .trim(from: 0, to: CGFloat(animatedPercent / 100))
+                .stroke(ringColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 22, height: 22)
+        .onAppear {
+            withAnimation(.smooth(duration: 0.5).delay(0.05)) {
+                animatedPercent = percent ?? 0
+            }
+        }
+        .onChange(of: percent) { _, newValue in
+            withAnimation(.smooth(duration: 0.5)) {
+                animatedPercent = newValue ?? 0
+            }
+        }
+    }
+
+    /// Shared between the ticking (active) and static (inactive) render paths, so
+    /// gating the tick can never change this row's measured height.
+    private func countdownStack(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(resetWindows.prefix(2)) { window in
+                HStack(spacing: 4) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.4))
+                    Text(windowLabel(window))
+                        .foregroundStyle(.white.opacity(0.4))
+                    Text(MenuQuotaPresenter.liveResetCountdown(window, now: now) ?? "")
+                        .foregroundStyle(.white.opacity(0.7))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+            }
         }
     }
 
