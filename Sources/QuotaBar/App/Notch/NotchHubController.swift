@@ -31,10 +31,9 @@ final class NotchHubController {
     private var screenObserver: NSObjectProtocol?
     private var hoverPollTask: Task<Void, Never>?
 
-    // Mirrors NotchHubView's own layout constants (earWidth / minimum expanded width)
-    // so the panel's deterministic collapsed/expanded frames match what SwiftUI will
-    // actually lay out. Keep these in sync if either file's values change.
-    private let earWidth: CGFloat = 70
+    // Mirrors NotchHubView's own layout constants so the panel's deterministic
+    // collapsed/expanded frames match what SwiftUI will actually lay out.
+    // Keep these in sync if either file's values change.
     private let minExpandedWidth: CGFloat = 380
 
     init(viewModel: AppViewModel, onOpenSettings: @escaping () -> Void) {
@@ -156,7 +155,7 @@ final class NotchHubController {
     }
 
     private func collapsedWidth(for geometry: NotchGeometry) -> CGFloat {
-        geometry.notchWidth + earWidth * 2
+        geometry.notchWidth
     }
 
     private func collapsedHeight(for geometry: NotchGeometry) -> CGFloat {
@@ -164,7 +163,7 @@ final class NotchHubController {
     }
 
     private func expandedWidth(for geometry: NotchGeometry) -> CGFloat {
-        max(collapsedWidth(for: geometry), minExpandedWidth)
+        max(geometry.notchWidth, minExpandedWidth)
     }
 
     private func collapsedSize(for geometry: NotchGeometry) -> CGSize {

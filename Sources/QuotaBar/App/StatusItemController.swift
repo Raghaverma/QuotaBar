@@ -13,7 +13,7 @@ final class StatusItemController {
         statusItem.button?.title = "…"
     }
 
-    var button: NSStatusItem.statusBarButtonType? { statusItem.button }
+    var button: NSStatusItem.StatusBarButtonType? { statusItem.button }
 
     /// Render entries with the chosen widget style; returns true if a redraw happened.
     @discardableResult
@@ -62,5 +62,5 @@ final class StatusItemController {
 
 /// AppKit's button type alias for clarity at the call site.
 extension NSStatusItem {
-    typealias statusBarButtonType = NSStatusBarButton
+    typealias StatusBarButtonType = NSStatusBarButton
 }

@@ -5,7 +5,10 @@ final class RelayAdapterRegistry: @unchecked Sendable {
     private let manifests: [String: RelayAdapterManifest]
 
     init(manifests: [RelayAdapterManifest]) {
-        self.manifests = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
+        // Keep the first manifest seen for any given id rather than trapping on a
+        // duplicate key (which `Dictionary(uniqueKeysWithValues:)` would do) — two
+        // bundled files sharing an `id` must not crash the app at launch.
+        self.manifests = Dictionary(manifests.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// Load every relay manifest from the bundle. SwiftPM's `.process` rule may

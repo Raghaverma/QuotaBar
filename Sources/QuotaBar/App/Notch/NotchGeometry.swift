@@ -34,11 +34,11 @@ struct NotchGeometry: Equatable {
                 screenFrame: frame
             )
         }
-        
+
         // Dynamic fallback to match the actual menu bar height on non-notched screens
         let menuBarHeight = frame.maxY - screen.visibleFrame.maxY
         let resolvedHeight = menuBarHeight > 0 ? menuBarHeight : fallbackHeight
-        
+
         return NotchGeometry(
             notchWidth: fallbackWidth,
             notchHeight: resolvedHeight,

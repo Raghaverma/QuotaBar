@@ -7,7 +7,7 @@ struct SettingRowLabel: View {
     let icon: String
     var color: Color = .gray
     let title: String
-    var subtitle: String? = nil
+    var subtitle: String?
 
     var body: some View {
         HStack(spacing: 11) {

@@ -33,7 +33,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0   # need full tag history to compute the next auto-version
 
@@ -44,7 +44,7 @@ jobs:
           xcode-select -p
 
       - name: Cache Swift PM Dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
         with:
           path: .build
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}

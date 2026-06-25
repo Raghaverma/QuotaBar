@@ -7,36 +7,53 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
     let descriptor: ProviderDescriptor
     private let keychain: KeychainService
     private let authFileURL: URL
+    private let session: URLSession
 
-    init(descriptor: ProviderDescriptor, keychain: KeychainService, authFileURL: URL? = nil) {
+    init(
+        descriptor: ProviderDescriptor,
+        keychain: KeychainService,
+        authFileURL: URL? = nil,
+        session: URLSession = .shared
+    ) {
         self.descriptor = descriptor
         self.keychain = keychain
         self.authFileURL = authFileURL
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".codex/auth.json")
+        self.session = session
     }
 
     func fetch() async throws -> UsageSnapshot {
+        try await fetch(forceRefresh: false)
+    }
+
+    func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
         guard FileManager.default.fileExists(atPath: authFileURL.path) else {
             throw ProviderError.missingCredential("Codex CLI login (~/.codex/auth.json)")
         }
-        
+
         let fileData = try Data(contentsOf: authFileURL)
         guard let jsonObject = try? JSONSerialization.jsonObject(with: fileData) as? [String: Any] else {
             throw ProviderError.invalidResponse("auth.json is malformed")
         }
-        
+
         let account = parseAccountLabel(data: fileData)
-        
+
         guard let tokens = jsonObject["tokens"] as? [String: Any],
-              let accessToken = tokens["access_token"] as? String,
+              var accessToken = tokens["access_token"] as? String,
               !accessToken.isEmpty else {
             throw ProviderError.missingCredential("Access token is missing in auth.json")
         }
-        
+
         let refreshTokenVal = tokens["refresh_token"] as? String
         let accountId = tokens["account_id"] as? String
-        
+
+        if forceRefresh, let refresh = refreshTokenVal, !refresh.isEmpty {
+            let newTokens = try await refreshAuthToken(refreshToken: refresh)
+            try writeBack(accessToken: newTokens.accessToken, refreshToken: newTokens.newRefreshToken)
+            accessToken = newTokens.accessToken
+        }
+
         var responseData: Data
         do {
             responseData = try await requestUsage(accessToken: accessToken, accountId: accountId)
@@ -54,15 +71,15 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
                 throw ProviderError.unauthorized
             }
         }
-        
+
         guard let root = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any] else {
             throw ProviderError.invalidResponse("Failed to parse API usage response")
         }
-        
+
         var windows: [UsageQuotaWindow] = []
         var primaryPct: Double?
         var secondaryPct: Double?
-        
+
         if let rateLimit = root["rate_limit"] as? [String: Any] {
             if let primary = rateLimit["primary_window"] as? [String: Any],
                let used = primary["used_percent"] as? Double {
@@ -95,7 +112,7 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
                 ))
             }
         }
-        
+
         // Fallback window if API parsed empty
         if windows.isEmpty {
             windows.append(UsageQuotaWindow(
@@ -108,10 +125,10 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
                 resetSource: .localEstimate
             ))
         }
-        
+
         let minPercent = [primaryPct, secondaryPct].compactMap { $0 }.min() ?? 100.0
         let plan = root["plan_type"] as? String ?? "unknown"
-        
+
         return UsageSnapshot(
             source: descriptor.id,
             status: minPercent <= Double(descriptor.threshold.lowRemaining) ? .warning : .ok,
@@ -137,8 +154,8 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         if let accountId {
             request.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
+
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.invalidResponse("non-http response")
         }
@@ -159,15 +176,15 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         request.httpMethod = "POST"
         request.timeoutInterval = 15
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        
+
         let bodyString = "grant_type=refresh_token&client_id=app_EMoamEEZ73f0CkXaXp7hrann&refresh_token=\(refreshToken)"
         request.httpBody = bodyString.data(using: .utf8)
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
+
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw ProviderError.unauthorized
         }
-        
+
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let accessToken = json["access_token"] as? String else {
             throw ProviderError.invalidResponse("refresh parse failed")
@@ -207,12 +224,12 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         let parts = idToken.components(separatedBy: ".")
         guard parts.count > 1 else { return nil }
         var payload = parts[1]
-        
+
         // Base64URL decoding alignment
         let padLength = (4 - (payload.count % 4)) % 4
         payload += String(repeating: "=", count: padLength)
         payload = payload.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        
+
         guard let data = Data(base64Encoded: payload),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil

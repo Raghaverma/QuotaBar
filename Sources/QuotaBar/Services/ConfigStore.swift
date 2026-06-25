@@ -43,9 +43,11 @@ final class ConfigStore: @unchecked Sendable {
         for url in [primaryURL, shadowURL, lastKnownGoodURL] {
             guard fileManager.fileExists(atPath: url.path),
                   let data = try? Data(contentsOf: url) else { continue }
-            AppConfig.lastDecodeDroppedCount = 0
-            if let config = try? Self.makeDecoder().decode(AppConfig.self, from: data) {
-                if AppConfig.lastDecodeDroppedCount > 0 {
+            let dropCounter = DecodeDropCounter()
+            let decoder = Self.makeDecoder()
+            decoder.userInfo[.decodeDropCounter] = dropCounter
+            if let config = try? decoder.decode(AppConfig.self, from: data) {
+                if dropCounter.droppedCount > 0 {
                     lastLoadWasLossy = true
                     // Preserve the raw bytes so nothing is silently discarded.
                     try? data.write(to: preservedURL)
@@ -79,10 +81,8 @@ final class ConfigStore: @unchecked Sendable {
 
     /// Remove all snapshots + import markers.
     func reset() throws {
-        for url in [primaryURL, shadowURL, lastKnownGoodURL, preservedURL] {
-            if fileManager.fileExists(atPath: url.path) {
-                try fileManager.removeItem(at: url)
-            }
+        for url in [primaryURL, shadowURL, lastKnownGoodURL, preservedURL] where fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
         }
     }
 }

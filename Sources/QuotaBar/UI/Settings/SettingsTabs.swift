@@ -206,8 +206,8 @@ struct NotchSettingsView: View {
                     }
                 } label: {
                     SettingRowLabel(icon: "star.fill", color: .yellow,
-                                    title: "Collapsed provider",
-                                    subtitle: "Shown on the notch when not expanded")
+                                    title: "Primary provider",
+                                    subtitle: "Shown first in the expanded panel")
                 }
                 .disabled(!viewModel.config.notchEnabled)
 
@@ -526,7 +526,7 @@ struct ConfigureProviderSheet: View {
                         Text("30 min").tag(30)
                     }
                 }
-                
+
                 if isRelay {
                     Section("Security / Credentials") {
                         SecureField("API Key / Token", text: $apiKey)
@@ -643,7 +643,7 @@ struct ConfigureProviderSheet: View {
         if isRelay, !apiKey.isEmpty {
             viewModel.setSecret(apiKey, for: providerID)
         }
-        
+
         // Save config
         viewModel.updateConfig { config in
             if let idx = config.providers.firstIndex(where: { $0.id == providerID }) {
@@ -712,7 +712,7 @@ struct AboutSettingsView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    
+
                 case .checking:
                     HStack(spacing: 8) {
                         ProgressView()
@@ -721,7 +721,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .font(.callout)
-                    
+
                 case .upToDate:
                     VStack(spacing: 6) {
                         HStack(spacing: 6) {
@@ -739,13 +739,13 @@ struct AboutSettingsView: View {
                         .font(.caption)
                     }
                     .font(.callout)
-                    
+
                 case .available(let manifest):
                     VStack(spacing: 10) {
                         Text("New Version Available: \(manifest.version)")
                             .font(.headline)
                             .foregroundStyle(.primary)
-                        
+
                         Button(action: {
                             Task {
                                 await viewModel.installAvailableUpdate()
@@ -757,7 +757,7 @@ struct AboutSettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
                         .controlSize(.large)
-                        
+
                         if let url = URL(string: manifest.release_url) {
                             Link("View Release Notes", destination: url)
                                 .font(.caption)
@@ -766,7 +766,7 @@ struct AboutSettingsView: View {
                     .padding()
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                     .frame(maxWidth: 320)
-                    
+
                 case .downloading:
                     VStack(spacing: 8) {
                         ProgressView()
@@ -774,7 +774,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .font(.callout)
-                    
+
                 case .installing:
                     VStack(spacing: 8) {
                         ProgressView()
@@ -782,7 +782,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     .font(.callout)
-                    
+
                 case .error(let error):
                     VStack(spacing: 8) {
                         HStack(spacing: 6) {
@@ -796,7 +796,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 280)
-                        
+
                         Button("Try Again") {
                             Task {
                                 await viewModel.checkForUpdates()
@@ -809,6 +809,20 @@ struct AboutSettingsView: View {
                 }
             }
             .frame(height: 100)
+
+            // Auto-update toggle — mirrors the one in General settings so users
+            // don't have to leave the About tab to change this preference.
+            Toggle(isOn: Binding(
+                get: { viewModel.config.autoUpdateEnabled },
+                set: { newValue in viewModel.updateConfig { $0.autoUpdateEnabled = newValue } }
+            )) {
+                Label("Automatically download and install updates",
+                      systemImage: "arrow.down.circle")
+                    .font(.callout)
+            }
+            .toggleStyle(.switch)
+            .frame(maxWidth: 320)
+            .padding(.top, 4)
 
             Divider()
                 .frame(maxWidth: 280)

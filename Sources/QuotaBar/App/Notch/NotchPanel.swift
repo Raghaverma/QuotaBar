@@ -29,4 +29,35 @@ final class NotchPanel: NSPanel {
     // gesture inside the hub receive clicks and fire.
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    // MARK: - Layout-pass re-entrancy guard
+    //
+    // During NSWindow.layoutIfNeeded, AppKit posts NSWindowDidLayoutNotification.
+    // SwiftUI's NSHostingView observes this and calls updateAnimatedWindowSize, which
+    // calls panel.setFrame(...) to chase the content's animated size. But calling
+    // setFrame from inside layoutIfNeeded triggers setFrameSize on NSNextStepFrame,
+    // which fires KVO, which calls invalidateSafeAreaInsets → setNeedsUpdateConstraints
+    // while a constraint pass is already running — AppKit throws NSGenericException.
+    // Fix: suppress setFrame calls that arrive while layoutIfNeeded is on the call stack.
+    // NotchHubController already sets the frame to the correct target size (expanded or
+    // collapsed) at the two instants around the animation; SwiftUI's mid-animation
+    // resize attempts are redundant and safe to drop.
+
+    private var isInLayout = false
+
+    override func layoutIfNeeded() {
+        isInLayout = true
+        defer { isInLayout = false }
+        super.layoutIfNeeded()
+    }
+
+    override func setFrame(_ frameRect: NSRect, display: Bool) {
+        guard !isInLayout else { return }
+        super.setFrame(frameRect, display: display)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display: Bool, animate: Bool) {
+        guard !isInLayout else { return }
+        super.setFrame(frameRect, display: display, animate: animate)
+    }
 }

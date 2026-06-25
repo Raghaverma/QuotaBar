@@ -25,7 +25,14 @@ enum RelayJSONExpressionEvaluator {
         var stringValue: String? {
             switch self {
             case .string(let s): return s
-            case .number(let n): return n == n.rounded() ? String(Int(n)) : String(n)
+            case .number(let n):
+                guard n.isFinite else { return nil }
+                // `Int(n)` traps on NaN/∞ or values beyond Int's range; only render
+                // as an integer within the exactly-representable range (±2^53).
+                if n == n.rounded(), abs(n) < 9_007_199_254_740_992 {
+                    return String(Int(n))
+                }
+                return String(n)
             case .bool(let b): return String(b)
             default: return nil
             }

@@ -1,0 +1,22 @@
+excluded:
+  - .build
+  - Packages
+  - dist
+
+# Disabled because they're size/style rules that would force splitting up
+# existing provider classes or renaming Codable keys that intentionally mirror
+# snake_case API/JSON fields (e.g. macos_zip, pub_date) — out of scope for a
+# lint pass; real correctness rules stay enabled.
+disabled_rules:
+  - identifier_name
+  - type_body_length
+  - file_length
+  - function_body_length
+  - function_parameter_count
+  - cyclomatic_complexity
+  - multiple_closures_with_trailing_closure
+  - todo
+
+line_length:
+  warning: 200
+  error: 240
