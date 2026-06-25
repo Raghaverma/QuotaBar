@@ -55,12 +55,16 @@ struct NotchHubView: View {
     }
 
     var body: some View {
-        // `.frame(maxWidth: .infinity, alignment: .center)` is critical: without it,
-        // NSHostingView left-aligns SwiftUI content. When the panel pre-expands to
-        // 380pt before the SwiftUI animation starts, the island would sit at the
-        // left edge instead of staying centered over the physical notch.
+        // `.ignoresSafeArea()` is required: the panel occupies the hardware-notch area
+        // (NSWindow.safeAreaInsets.top = notchHeight), so NSHostingView would otherwise
+        // push SwiftUI content DOWN by notchHeight, making the island float below the
+        // menu bar. Ignoring safe areas lets the island fill from y=0 of the hosting
+        // view, which is flush with the top of the screen / the physical notch.
+        // `.frame(maxWidth: .infinity, alignment: .center)` keeps the island centered
+        // when the panel pre-expands to 380pt before the SwiftUI animation starts.
         island
             .frame(maxWidth: .infinity, alignment: .center)
+            .ignoresSafeArea()
             .onAppear { layout.hoverHandler = { hovering in handleHover(hovering) } }
     }
 

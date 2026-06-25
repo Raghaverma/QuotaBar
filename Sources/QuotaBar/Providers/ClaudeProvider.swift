@@ -302,15 +302,33 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.unavailable("Claude subscription required")
         }
 
-        guard let sessionRemaining = extractClaudePercent(label: "Current session", text: clean) else {
+        // Try multiple label variants: old CLI used "Current session"/"Current week";
+        // newer CLI versions (Max plan, local-session mode) use "5h"/"Weekly".
+        let sessionRemaining = extractClaudePercent(label: "Current session", text: clean)
+            ?? extractClaudePercent(label: "5h", text: clean)
+            ?? extractClaudePercent(label: "5-hour", text: clean)
+            ?? extractClaudePercent(label: "5 hour", text: clean)
+
+        guard let sessionRemaining else {
             let trimmed = clean.trimmingCharacters(in: .whitespacesAndNewlines)
             let snippet = String(trimmed.prefix(160)).replacingOccurrences(of: "\n", with: " / ")
             throw ProviderError.invalidResponse("missing Claude current session usage (got: \"\(snippet)\")")
         }
 
         let weeklyRemaining = extractClaudePercent(label: "Current week", text: clean)
+            ?? extractClaudePercent(label: "Weekly", text: clean)
+            ?? extractClaudePercent(label: "7-day", text: clean)
+            ?? extractClaudePercent(label: "7 day", text: clean)
+
         let sessionReset = extractClaudeReset(label: "Current session", text: clean)
+            ?? extractClaudeReset(label: "5h", text: clean)
+            ?? extractClaudeReset(label: "5-hour", text: clean)
+            ?? extractClaudeReset(label: "5 hour", text: clean)
+
         let weeklyReset = extractClaudeReset(label: "Current week", text: clean)
+            ?? extractClaudeReset(label: "Weekly", text: clean)
+            ?? extractClaudeReset(label: "7-day", text: clean)
+            ?? extractClaudeReset(label: "7 day", text: clean)
 
         var windows: [UsageQuotaWindow] = [
             UsageQuotaWindow(
@@ -344,7 +362,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             limit: 100,
             unit: "%",
             updatedAt: Date(),
-            note: "Session \(sessionRemaining)% | Weekly \(weeklyRemaining ?? 0)%",
+            note: "",
             quotaWindows: windows,
             sourceLabel: "CLI",
             accountLabel: nil,
@@ -509,9 +527,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         if let planHint {
             parts.append("Plan: \(planHint.capitalized)")
         }
-        for window in windows.prefix(3) {
-            parts.append("\(window.title) \(Int(window.remainingPercent.rounded()))%")
-        }
+        // window percentages intentionally omitted — they appear in the quota-window rows
         if let extraCost {
             if let extraLimit, extraLimit > 0 {
                 parts.append("Extra $\(String(format: "%.2f", extraCost))/$\(String(format: "%.2f", extraLimit))")
