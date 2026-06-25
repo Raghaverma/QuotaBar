@@ -32,10 +32,15 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         Task {
             try? await Task.sleep(for: .seconds(3))
             await vm.checkForUpdates(quietly: true)
-            // Re-check every 24 hours for the lifetime of the process.
-            let day: UInt64 = 24 * 60 * 60 * 1_000_000_000
-            while true {
-                try? await Task.sleep(nanoseconds: day)
+            // Re-check every 24 hours for the lifetime of the process. Stop if the
+            // task is cancelled — otherwise a swallowed cancellation would turn this
+            // into a tight, no-delay loop.
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(24 * 60 * 60))
+                } catch {
+                    break   // cancelled
+                }
                 await vm.checkForUpdates(quietly: true)
             }
         }

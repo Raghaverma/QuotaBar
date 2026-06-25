@@ -206,8 +206,8 @@ struct NotchSettingsView: View {
                     }
                 } label: {
                     SettingRowLabel(icon: "star.fill", color: .yellow,
-                                    title: "Collapsed provider",
-                                    subtitle: "Shown on the notch when not expanded")
+                                    title: "Primary provider",
+                                    subtitle: "Shown first in the expanded panel")
                 }
                 .disabled(!viewModel.config.notchEnabled)
 

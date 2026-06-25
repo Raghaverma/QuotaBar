@@ -37,4 +37,23 @@ final class NotchHostingView: NSHostingView<NotchHubView> {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // MARK: - Layout-pass re-entrancy guard
+    //
+    // View-level counterpart to NotchPanel's window-level guard. AppKit has been seen
+    // logging "It's not legal to call -layoutSubtreeIfNeeded on a view which is already
+    // being laid out" from this view during the open/close animation — the same
+    // SwiftUI-animation-driven re-entrancy that caused the original NSGenericException
+    // crash, just caught by a (currently non-fatal) assertion instead. AppKit's own
+    // message warns "this may break in the future," so guard it the same way: drop
+    // re-entrant calls that arrive while a layout pass for this view is already running.
+
+    private var isInLayout = false
+
+    override func layoutSubtreeIfNeeded() {
+        guard !isInLayout else { return }
+        isInLayout = true
+        defer { isInLayout = false }
+        super.layoutSubtreeIfNeeded()
+    }
 }

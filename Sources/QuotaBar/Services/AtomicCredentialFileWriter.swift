@@ -16,8 +16,10 @@ enum AtomicCredentialFileWriter {
             try manager.copyItem(at: url, to: backupURL)
         }
         try data.write(to: url, options: .atomic)
-        if let permissions = attributes[.posixPermissions] {
-            try manager.setAttributes([.posixPermissions: permissions], ofItemAtPath: url.path)
-        }
+        // Preserve the original file's permissions; for a brand-new file fall back to
+        // owner-only (0600) rather than the umask default so a credential file is
+        // never left group/world-readable.
+        let permissions = attributes[.posixPermissions] ?? NSNumber(value: 0o600)
+        try manager.setAttributes([.posixPermissions: permissions], ofItemAtPath: url.path)
     }
 }

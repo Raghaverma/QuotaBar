@@ -53,6 +53,9 @@ final class AppViewModel {
 
     private var providers: [String: any UsageProvider] = [:]
     private var consecutiveFailures: [String: Int] = [:]
+    /// The last alert *kind* posted per provider, so a sustained low/failed state
+    /// notifies once on entry instead of re-firing every poll cycle.
+    private var lastAlertKey: [String: String] = [:]
 
     init(
         configStore: ConfigStore = ConfigStore(),
@@ -170,7 +173,7 @@ final class AppViewModel {
             consecutiveFailures: consecutiveFailures[descriptor.id] ?? 0,
             rule: descriptor.threshold
         )
-        notificationService.post(decision: decision, providerName: descriptor.name)
+        dispatchAlert(id: descriptor.id, decision: decision, providerName: descriptor.name)
     }
 
     private func evaluateFailureAlerts(id: String, error: Error, descriptor: ProviderDescriptor) {
@@ -183,7 +186,26 @@ final class AppViewModel {
             consecutiveFailures: consecutiveFailures[id] ?? 0,
             rule: descriptor.threshold
         )
-        notificationService.post(decision: decision, providerName: descriptor.name)
+        dispatchAlert(id: id, decision: decision, providerName: descriptor.name)
+    }
+
+    /// Edge-triggered delivery: only post when the alert *kind* for a provider
+    /// changes, so a provider that stays low (or keeps failing) notifies once on
+    /// entry rather than every poll. A return to `.none` re-arms the next alert.
+    private func dispatchAlert(id: String, decision: AlertEngine.Decision, providerName: String) {
+        let key = Self.alertKey(decision)
+        guard lastAlertKey[id] != key else { return }
+        lastAlertKey[id] = key
+        notificationService.post(decision: decision, providerName: providerName)
+    }
+
+    private static func alertKey(_ decision: AlertEngine.Decision) -> String {
+        switch decision {
+        case .none: return "none"
+        case .lowRemaining: return "low"          // ignore the exact percent
+        case .repeatedFailures: return "fail"     // ignore the exact count
+        case .authError: return "auth"
+        }
     }
 
     // MARK: Config mutation
@@ -279,6 +301,7 @@ final class AppViewModel {
         }
         snapshots[id] = nil
         errors[id] = nil
+        lastAlertKey[id] = nil
         usageHistory[id] = nil
         do {
             try historyStore.save(usageHistory)
@@ -314,26 +337,37 @@ final class AppViewModel {
     }
 
     func trendDescription(for providerID: String) -> String? {
-        guard let values = usageHistory[providerID], values.count >= 2,
-              let first = values.first, let last = values.last else { return nil }
-        let delta = last.remainingPercent - first.remainingPercent
-        if abs(delta) < 1 { return "Stable recently" }
-        guard delta < 0 else { return "\(Int(delta.rounded())) points recovered recently" }
+        guard let all = usageHistory[providerID], all.count >= 2 else { return nil }
 
-        // Real elapsed wall-clock time between the two samples — not an assumed
-        // constant poll interval, which drifts whenever a refresh is skipped, slept
-        // through, or its interval changes.
+        // Only look at the last 24h so "recently" is honest — the full retained
+        // history can span a week, which is not a recent trend.
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        let values = all.filter { $0.at >= cutoff }
+        guard values.count >= 2, let first = values.first, let last = values.last else { return nil }
+
+        // Sum decreases as consumption and increases as recovery separately, so a
+        // quota reset (a jump back up) is never miscounted as negative consumption.
+        var consumed = 0.0
+        var recovered = 0.0
+        for (prev, curr) in zip(values, values.dropFirst()) {
+            let delta = curr.remainingPercent - prev.remainingPercent
+            if delta < 0 { consumed += -delta } else { recovered += delta }
+        }
+
+        if consumed < 1 && recovered < 1 { return "Stable recently" }
+        if consumed < 1 { return "\(Int(recovered.rounded())) points recovered recently" }
+
+        let consumedLabel = "\(Int(consumed.rounded())) points consumed recently"
+
+        // Real elapsed wall-clock time across the window — not an assumed constant
+        // poll interval, which drifts whenever a refresh is skipped or rescheduled.
         let elapsedSeconds = last.at.timeIntervalSince(first.at)
-        guard elapsedSeconds > 0 else {
-            return "\(Int(abs(delta).rounded())) points consumed recently"
-        }
-        let consumedPerSecond = abs(delta) / elapsedSeconds
-        guard consumedPerSecond > 0 else {
-            return "\(Int(abs(delta).rounded())) points consumed recently"
-        }
+        guard elapsedSeconds > 0 else { return consumedLabel }
+        let consumedPerSecond = consumed / elapsedSeconds
+        guard consumedPerSecond > 0, last.remainingPercent > 0 else { return consumedLabel }
         let secondsRemaining = last.remainingPercent / consumedPerSecond
         let estimate = Self.formatDuration(seconds: secondsRemaining)
-        return "\(Int(abs(delta).rounded())) points consumed recently · ~\(estimate) at this pace"
+        return "\(consumedLabel) · ~\(estimate) at this pace"
     }
 
     private static func formatDuration(seconds: Double) -> String {

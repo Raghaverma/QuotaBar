@@ -42,7 +42,8 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
             data: data,
             manifest: manifest,
             providerID: descriptor.id,
-            providerName: descriptor.name
+            providerName: descriptor.name,
+            lowRemaining: descriptor.threshold.lowRemaining
         )
     }
 

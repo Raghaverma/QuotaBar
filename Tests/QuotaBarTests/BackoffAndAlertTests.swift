@@ -6,11 +6,16 @@ final class BackoffPolicyTests: XCTestCase {
     func testBaseIntervalWithNoFailures() {
         XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 300, consecutiveFailures: 0), 300)
     }
-    func testTwoMinutesAfterFirstFailure() {
-        XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 300, consecutiveFailures: 1), 120)
+    func testFirstFailureWidensToAtLeastTwoMinutes() {
+        XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 60, consecutiveFailures: 1), 120)
     }
-    func testFiveMinutesAfterRepeatedFailures() {
-        XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 300, consecutiveFailures: 5), 300)
+    func testRepeatedFailuresWidenToAtLeastFiveMinutes() {
+        XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 60, consecutiveFailures: 5), 300)
+    }
+    func testBackoffNeverPollsFasterThanBaseInterval() {
+        // Relaxed (600s) / Low-power (900s) modes must not speed up on failure.
+        XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 600, consecutiveFailures: 1), 600)
+        XCTAssertEqual(BackoffPolicy.delaySeconds(baseInterval: 900, consecutiveFailures: 5), 900)
     }
 }
 

@@ -232,7 +232,15 @@ struct NotchHubView: View {
     // MARK: Data helpers
 
     private var enabledProviders: [ProviderDescriptor] {
-        viewModel.config.providers.filter { $0.enabled }
+        let enabled = viewModel.config.providers.filter { $0.enabled }
+        // The configured primary provider (if still enabled) is surfaced first.
+        guard let primaryID = viewModel.config.notchProviderID,
+              let primaryIndex = enabled.firstIndex(where: { $0.id == primaryID }) else {
+            return enabled
+        }
+        var ordered = enabled
+        ordered.insert(ordered.remove(at: primaryIndex), at: 0)
+        return ordered
     }
 }
 

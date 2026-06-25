@@ -54,15 +54,26 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             credentials = try await refresh(credentials: credentials)
         }
 
-        let (data, usageResponse) = try await requestOAuthUsage(accessToken: credentials.accessToken)
-        return try Self.parseClaudeSnapshot(
-            root: data,
-            response: usageResponse,
-            descriptor: descriptor,
-            sourceLabel: "API",
-            accountLabel: credentials.accountLabel,
-            planHint: credentials.subscriptionType
-        )
+        func snapshot(using creds: ClaudeCredentials) async throws -> UsageSnapshot {
+            let (data, usageResponse) = try await requestOAuthUsage(accessToken: creds.accessToken)
+            return try Self.parseClaudeSnapshot(
+                root: data,
+                response: usageResponse,
+                descriptor: descriptor,
+                sourceLabel: "API",
+                accountLabel: creds.accountLabel,
+                planHint: creds.subscriptionType
+            )
+        }
+
+        do {
+            return try await snapshot(using: credentials)
+        } catch ProviderError.unauthorized {
+            // The token was rejected before its stated expiry — refresh once and
+            // retry rather than surfacing a spurious re-authorize prompt.
+            credentials = try await refresh(credentials: credentials)
+            return try await snapshot(using: credentials)
+        }
     }
 
     private func loadFromCLI() async throws -> UsageSnapshot {
@@ -138,7 +149,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private func needsRefresh(expiresAtMs: Double?) -> Bool {
         guard let expiresAtMs else { return false }
         let nowMs = Date().timeIntervalSince1970 * 1000
-        return nowMs + 5 * 60 * 1000 >= expiresAtMs
+        return nowMs + refreshBuffer * 1000 >= expiresAtMs
     }
 
     private func refresh(credentials: ClaudeCredentials) async throws -> ClaudeCredentials {
