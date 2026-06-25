@@ -23,7 +23,7 @@ struct NotchShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let t = min(topCornerRadius,    min(rect.width, rect.height) / 2)
+        let t = min(topCornerRadius, min(rect.width, rect.height) / 2)
         let b = min(bottomCornerRadius, min(rect.width, rect.height) / 2)
         var p = Path()
 
@@ -31,7 +31,7 @@ struct NotchShape: Shape {
         // island's top edge reads as a continuation of the flat screen bezel.
         p.move(to: CGPoint(x: rect.minX, y: rect.minY))
         p.addQuadCurve(
-            to:      CGPoint(x: rect.minX + t, y: rect.minY + t),
+            to: CGPoint(x: rect.minX + t, y: rect.minY + t),
             control: CGPoint(x: rect.minX + t, y: rect.minY)
         )
 
@@ -40,8 +40,8 @@ struct NotchShape: Shape {
 
         // Bottom-left corner: standard convex rounded corner.
         p.addQuadCurve(
-            to:      CGPoint(x: rect.minX + t + b, y: rect.maxY),
-            control: CGPoint(x: rect.minX + t,     y: rect.maxY)
+            to: CGPoint(x: rect.minX + t + b, y: rect.maxY),
+            control: CGPoint(x: rect.minX + t, y: rect.maxY)
         )
 
         // Bottom edge.
@@ -49,8 +49,8 @@ struct NotchShape: Shape {
 
         // Bottom-right corner: standard convex rounded corner.
         p.addQuadCurve(
-            to:      CGPoint(x: rect.maxX - t,     y: rect.maxY - b),
-            control: CGPoint(x: rect.maxX - t,     y: rect.maxY)
+            to: CGPoint(x: rect.maxX - t, y: rect.maxY - b),
+            control: CGPoint(x: rect.maxX - t, y: rect.maxY)
         )
 
         // Right edge up to the top-right fillet start.
@@ -58,8 +58,8 @@ struct NotchShape: Shape {
 
         // Top-right corner: concave inverse fillet.
         p.addQuadCurve(
-            to:      CGPoint(x: rect.maxX,      y: rect.minY),
-            control: CGPoint(x: rect.maxX - t,  y: rect.minY)
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.maxX - t, y: rect.minY)
         )
 
         // Close along the top edge back to origin.

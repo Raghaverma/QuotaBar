@@ -24,14 +24,14 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     }
 
     func fetch(forceRefresh: Bool) async throws -> UsageSnapshot {
-        try await loadSnapshot()
+        try await loadSnapshot(forceRefresh: forceRefresh)
     }
 
-    private func loadSnapshot() async throws -> UsageSnapshot {
+    private func loadSnapshot(forceRefresh: Bool) async throws -> UsageSnapshot {
         let official = descriptor.officialConfig ?? OfficialProviderConfig(sourceMode: .api)
         switch official.sourceMode {
         case .api, .auto:
-            return try await loadFromAPI()
+            return try await loadFromAPI(forceRefresh: forceRefresh)
         case .cli:
             throw ProviderError.unavailable("Gemini official source currently only supports API credential discovery")
         case .web:
@@ -39,7 +39,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
     }
 
-    private func loadFromAPI() async throws -> UsageSnapshot {
+    private func loadFromAPI(forceRefresh: Bool) async throws -> UsageSnapshot {
         let settings = try loadSettings()
         switch settings.authType {
         case "api-key":
@@ -51,7 +51,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
 
         var credentials = try loadCredentials()
-        if needsRefresh(credentials.expiresAt) {
+        if forceRefresh || needsRefresh(credentials.expiresAt) {
             credentials = try await refresh(credentials: credentials)
         }
 
@@ -124,7 +124,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             auth?["selectedType"],
             auth?["selectedAuthType"],
             auth?["authType"],
-            auth?["auth_type"],
+            auth?["auth_type"]
         ]) ?? "oauth-personal"
         let selectedProject = Self.firstNonEmptyString([
             json["selectedProject"],
@@ -136,7 +136,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             auth?["project"],
             auth?["projectId"],
             auth?["project_id"],
-            auth?["cloudaicompanionProject"],
+            auth?["cloudaicompanionProject"]
         ])
         return GeminiSettings(
             authType: authType,
@@ -148,10 +148,10 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         var metadata: [String: Any] = [
             "ideType": "IDE_UNSPECIFIED",
             "platform": "PLATFORM_UNSPECIFIED",
-            "pluginType": "GEMINI",
+            "pluginType": "GEMINI"
         ]
         var body: [String: Any] = [
-            "metadata": metadata,
+            "metadata": metadata
         ]
         if let projectID, !projectID.isEmpty {
             body["cloudaicompanionProject"] = projectID
@@ -174,7 +174,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             codeAssistRoot["cloudaicompanionProject"],
             codeAssistRoot["project"],
             codeAssistRoot["projectId"],
-            codeAssistRoot["project_id"],
+            codeAssistRoot["project_id"]
         ]), !project.isEmpty {
             return project
         }
@@ -242,9 +242,9 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
             "client_id": client.id,
-            "client_secret": client.secret,
+            "client_secret": client.secret
         ]
-        
+
         var components = URLComponents()
         components.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
         request.httpBody = components.query?.data(using: .utf8)
@@ -282,12 +282,12 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         guard var json = try JSONSerialization.jsonObject(with: fileData) as? [String: Any] else {
             throw ProviderError.invalidResponse("Gemini credential file is malformed")
         }
-        
+
         json["access_token"] = credentials.accessToken
         json["refresh_token"] = credentials.refreshToken
         json["id_token"] = credentials.idToken
         json["expiry_date"] = credentials.expiresAt.map { Int64($0.timeIntervalSince1970 * 1000) }
-        
+
         try AtomicCredentialFileWriter.writeJSON(json, to: url)
     }
 
@@ -323,7 +323,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             json["oauth"] as? [String: Any],
             json["oauth_client"] as? [String: Any],
             json["oauthClient"] as? [String: Any],
-            json["client"] as? [String: Any],
+            json["client"] as? [String: Any]
         ].compactMap { $0 }
 
         for root in candidateRoots {
@@ -559,7 +559,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             currentTier?["id"],
             currentTier?["name"],
             paidTier?["id"],
-            paidTier?["name"],
+            paidTier?["name"]
         ])
         guard let raw else { return nil }
         switch raw.lowercased() {
@@ -645,7 +645,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
             item["usage"] as? [String: Any],
             item["quota"] as? [String: Any],
             item["window"] as? [String: Any],
-            item["bucket"] as? [String: Any],
+            item["bucket"] as? [String: Any]
         ].compactMap { $0 }
 
         var usedPercent: Double?

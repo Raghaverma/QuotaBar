@@ -139,13 +139,14 @@ struct AppConfig: Codable, Equatable, Sendable {
         notchExpandOnHover = try c.decodeIfPresent(Bool.self, forKey: .notchExpandOnHover) ?? true
         notchCompactWidth = try c.decodeIfPresent(Bool.self, forKey: .notchCompactWidth) ?? false
         autoUpdateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUpdateEnabled) ?? true
-        providers = try Self.decodeProvidersLossily(from: c)
+        providers = try Self.decodeProvidersLossily(from: c, userInfo: decoder.userInfo)
     }
 
-    /// Lossy-tolerant provider decoding: skip entries we can't decode (counting them)
-    /// rather than failing the whole file.
+    /// Lossy-tolerant provider decoding: skip entries we can't decode (counting them
+    /// via the caller-supplied `userInfo` counter) rather than failing the whole file.
     private static func decodeProvidersLossily(
-        from container: KeyedDecodingContainer<CodingKeys>
+        from container: KeyedDecodingContainer<CodingKeys>,
+        userInfo: [CodingUserInfoKey: Any]
     ) throws -> [ProviderDescriptor] {
         guard container.contains(.providers) else { return AppConfig.default.providers }
         var unkeyed = try container.nestedUnkeyedContainer(forKey: .providers)
@@ -161,12 +162,20 @@ struct AppConfig: Codable, Equatable, Sendable {
                 dropped += 1
             }
         }
-        AppConfig.lastDecodeDroppedCount = dropped
+        (userInfo[.decodeDropCounter] as? DecodeDropCounter)?.droppedCount = dropped
         return result
     }
+}
 
-    /// Records how many provider entries were skipped by the most recent decode.
-    nonisolated(unsafe) static var lastDecodeDroppedCount = 0
+/// Carries how many provider entries a decode skipped back to the caller, via
+/// `JSONDecoder.userInfo[.decodeDropCounter]`. A class (rather than the previous
+/// `static var`) so concurrent decodes on different decoder instances can't race.
+final class DecodeDropCounter: @unchecked Sendable {
+    var droppedCount = 0
+}
+
+extension CodingUserInfoKey {
+    static let decodeDropCounter = CodingUserInfoKey(rawValue: "decodeDropCounter")!
 }
 
 /// Wraps a decode so failure yields `nil` while still consuming the element.

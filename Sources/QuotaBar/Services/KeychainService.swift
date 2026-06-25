@@ -13,6 +13,10 @@ final class KeychainService: CredentialStoring, @unchecked Sendable {
         var query = baseQuery(service: service, account: account)
         SecItemDelete(query as CFDictionary)   // replace semantics
         query[kSecValueData as String] = data
+        // Restrict to this device, never included in iCloud Keychain sync or backups —
+        // only matters on add; deliberately not part of baseQuery() so reads/deletes
+        // still match items that predate this attribute.
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeychainError.osStatus(status) }
     }

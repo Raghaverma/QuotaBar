@@ -10,26 +10,24 @@ extension Bundle {
            let bundle = Bundle(url: resourceURL) {
             return bundle
         }
-        
+
         // 2. Search in the main bundle URL (root of the app or CLI)
         let mainBundlePath = Bundle.main.bundleURL.appendingPathComponent("QuotaBar_QuotaBar.bundle")
         if let bundle = Bundle(url: mainBundlePath) {
             return bundle
         }
-        
+
         // 3. Search in the directory of the current executable (for command-line runs)
         if let exeURL = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("QuotaBar_QuotaBar.bundle"),
            let bundle = Bundle(url: exeURL) {
             return bundle
         }
-        
+
         // 4. Scan all loaded bundles to find the resource bundle dynamically (useful for test runs)
-        for bundle in Bundle.allBundles {
-            if bundle.bundlePath.hasSuffix("QuotaBar_QuotaBar.bundle") {
-                return bundle
-            }
+        for bundle in Bundle.allBundles where bundle.bundlePath.hasSuffix("QuotaBar_QuotaBar.bundle") {
+            return bundle
         }
-        
+
         // 5. Final fallback to the SwiftPM auto-generated accessor
         return Bundle.module
     }

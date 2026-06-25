@@ -160,10 +160,19 @@ final class AppViewModel {
         series.append(HistorySample(at: snapshot.updatedAt, remainingPercent: pct))
         if series.count > maxHistory { series.removeFirst(series.count - maxHistory) }
         usageHistory[id] = series
-        do {
-            try historyStore.save(usageHistory)
-        } catch {
-            report(title: "Couldn’t save usage history", error: error)
+        // Encode + write off the main actor — this fires on every successful poll,
+        // and with several providers × up to maxHistory samples each, doing it
+        // synchronously here was avoidable UI-thread disk I/O.
+        let snapshotToPersist = usageHistory
+        let store = historyStore
+        Task.detached(priority: .utility) {
+            do {
+                try store.save(snapshotToPersist)
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.report(title: "Couldn’t save usage history", error: error)
+                }
+            }
         }
     }
 
@@ -248,7 +257,7 @@ final class AppViewModel {
             report(title: "Couldn’t save credential", error: error)
             return
         }
-        
+
         updateConfig { config in
             if let idx = config.providers.firstIndex(where: { $0.id == providerID }) {
                 config.providers[idx].auth.kind = .bearer

@@ -20,12 +20,12 @@ final class GeminiProviderTests: XCTestCase {
             "quotaInfos": [
                 [
                     "quotaId": "gemini-2.5-pro",
-                    "usage": ["utilization": 0.40, "resetAt": "2026-04-11T08:00:00Z"],
+                    "usage": ["utilization": 0.40, "resetAt": "2026-04-11T08:00:00Z"]
                 ],
                 [
                     "quotaId": "gemini-2.5-flash",
-                    "usage": ["utilization": 20.0, "resetAt": "2026-04-11T02:00:00Z"],
-                ],
+                    "usage": ["utilization": 20.0, "resetAt": "2026-04-11T02:00:00Z"]
+                ]
             ]
         ]
         let codeAssistRoot: [String: Any] = ["tierId": "legacy-pro"]
@@ -61,19 +61,19 @@ final class GeminiProviderTests: XCTestCase {
                     "modelId": "gemini-2.5-pro",
                     "remainingAmount": "400",
                     "remainingFraction": 0.40,
-                    "resetTime": "2026-04-11T08:00:00Z",
+                    "resetTime": "2026-04-11T08:00:00Z"
                 ],
                 [
                     "modelId": "gemini-2.5-flash",
                     "remainingAmount": "900",
                     "remainingFraction": 0.90,
-                    "resetTime": "2026-04-11T02:00:00Z",
-                ],
+                    "resetTime": "2026-04-11T02:00:00Z"
+                ]
             ]
         ]
         let codeAssistRoot: [String: Any] = [
             "currentTier": ["id": "legacy-pro"],
-            "cloudaicompanionProject": "demo-project",
+            "cloudaicompanionProject": "demo-project"
         ]
 
         let snapshot = try GeminiProvider.parseQuotaSnapshot(

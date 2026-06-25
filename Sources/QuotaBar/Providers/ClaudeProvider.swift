@@ -202,14 +202,14 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         guard var json = try JSONSerialization.jsonObject(with: fileData) as? [String: Any] else {
             throw ProviderError.invalidResponse("Claude credential file is malformed")
         }
-        
+
         var oauth = (json["claudeAiOauth"] as? [String: Any]) ?? [:]
         oauth["accessToken"] = credentials.accessToken
         oauth["refreshToken"] = credentials.refreshToken
         oauth["expiresAt"] = credentials.expiresAtMs
         oauth["subscriptionType"] = credentials.subscriptionType
         json["claudeAiOauth"] = oauth
-        
+
         try AtomicCredentialFileWriter.writeJSON(json, to: url)
     }
 

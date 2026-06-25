@@ -36,10 +36,10 @@ struct NotchHubView: View {
 
     // Collapsed footprint matches the physical notch exactly (derived from NSScreen
     // safeAreaInsets / auxiliaryTopLeft+RightArea in NotchGeometry). No extra width.
-    private var collapsedWidth:  CGFloat { geometry.notchWidth }
+    private var collapsedWidth: CGFloat { geometry.notchWidth }
     private var collapsedHeight: CGFloat { geometry.notchHeight }
-    private var expandedWidth:   CGFloat { max(geometry.notchWidth, 380) }
-    private var expandedHeight:  CGFloat {
+    private var expandedWidth: CGFloat { max(geometry.notchWidth, 380) }
+    private var expandedHeight: CGFloat {
         Self.estimatedExpandedBodyHeight(enabledProviderCount: enabledProviders.count)
     }
 
@@ -243,7 +243,6 @@ struct NotchHubView: View {
         return ordered
     }
 }
-
 
 /// One provider row in the expanded hub: ring, name, countdown, trend, percent.
 private struct NotchProviderRow: View {

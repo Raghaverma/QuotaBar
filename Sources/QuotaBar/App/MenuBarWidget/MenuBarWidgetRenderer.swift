@@ -147,17 +147,17 @@ enum MenuBarWidgetRenderer {
         let vPad: CGFloat = 2
         let usableH = height - vPad * 2
         let stepX = width / CGFloat(points.count - 1)
-        
+
         var cgPoints: [CGPoint] = []
         for (i, value) in points.enumerated() {
             let px = x + stepX * CGFloat(i)
             let py = vPad + usableH * CGFloat(min(max(value, 0), 100) / 100)
             cgPoints.append(CGPoint(x: px, y: py))
         }
-        
+
         let path = NSBezierPath()
         path.move(to: cgPoints[0])
-        
+
         for i in 0..<(cgPoints.count - 1) {
             let p0 = cgPoints[i]
             let p1 = cgPoints[i + 1]
@@ -166,7 +166,7 @@ enum MenuBarWidgetRenderer {
             let cp2 = CGPoint(x: p1.x - stepX / 3.0, y: p1.y)
             path.curve(to: p1, controlPoint1: cp1, controlPoint2: cp2)
         }
-        
+
         path.lineWidth = 1.5
         path.lineJoinStyle = .round
         path.lineCapStyle = .round

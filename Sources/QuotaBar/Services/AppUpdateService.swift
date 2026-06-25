@@ -28,6 +28,7 @@ enum AppUpdateError: Error, LocalizedError {
     case untrustedDownloadLocation
     case unexpectedAssetSize
     case invalidCodeSignature
+    case signingIdentityMismatch
     case wrongBundleIdentifier
     case httpStatus(Int)
 
@@ -40,6 +41,7 @@ enum AppUpdateError: Error, LocalizedError {
         case .untrustedDownloadLocation: return "The update points to an untrusted download location."
         case .unexpectedAssetSize: return "The downloaded update size does not match the release manifest."
         case .invalidCodeSignature: return "The downloaded application has an invalid code signature."
+        case .signingIdentityMismatch: return "The downloaded application is signed with a different identity than the running app."
         case .wrongBundleIdentifier: return "The downloaded application is not QuotaBar."
         case .httpStatus(let status): return "The update server returned HTTP \(status)."
         }
@@ -129,19 +131,19 @@ actor AppUpdateService {
         guard mainBundleURL.pathExtension == "app" else {
             throw AppUpdateError.unsupportedInstallLocation
         }
-        
+
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        
+
         defer {
             try? fileManager.removeItem(at: tempDir)
         }
-        
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         process.arguments = ["-x", "-k", zipURL.path, tempDir.path]
-        
+
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { proc in
                 if proc.terminationStatus == 0 {
@@ -160,7 +162,7 @@ actor AppUpdateService {
                 continuation.resume(throwing: error)
             }
         }
-        
+
         let newAppURL = tempDir.appendingPathComponent("QuotaBar.app")
         guard fileManager.fileExists(atPath: newAppURL.path) else {
             throw NSError(
@@ -173,14 +175,15 @@ actor AppUpdateService {
             throw AppUpdateError.wrongBundleIdentifier
         }
         try await verifyCodeSignature(at: newAppURL)
-        
+        try await verifySigningIdentityMatchesRunningApp(at: newAppURL)
+
         let backupURL = fileManager.temporaryDirectory.appendingPathComponent("QuotaBar.app.bak-\(UUID().uuidString)")
         if fileManager.fileExists(atPath: backupURL.path) {
             try? fileManager.removeItem(at: backupURL)
         }
-        
+
         try fileManager.moveItem(at: mainBundleURL, to: backupURL)
-        
+
         do {
             try fileManager.moveItem(at: newAppURL, to: mainBundleURL)
             try? fileManager.removeItem(at: backupURL)
@@ -197,10 +200,10 @@ actor AppUpdateService {
             }
             throw error
         }
-        
+
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = []
-        
+
         await MainActor.run {
             NSWorkspace.shared.openApplication(at: mainBundleURL, configuration: configuration) { _, error in
                 if let error = error {
@@ -240,6 +243,47 @@ actor AppUpdateService {
         }
     }
 
+    /// Confirms the downloaded bundle is signed by the same identity as the app
+    /// that's currently running. `codesign --verify` only proves the signature is
+    /// internally consistent (an ad-hoc signature passes); without this check, anyone
+    /// who can publish a GitHub release — not just the app's actual signer — could
+    /// ship a silently auto-installed update. Skipped when the running app itself has
+    /// no real Team Identifier (e.g. local ad-hoc/dev builds), since there's no trust
+    /// anchor to compare against in that case.
+    private func verifySigningIdentityMatchesRunningApp(at newAppURL: URL) async throws {
+        let runningTeamID = try await Self.teamIdentifier(at: Bundle.main.bundleURL)
+        guard let runningTeamID, !runningTeamID.isEmpty else { return }
+        let newTeamID = try await Self.teamIdentifier(at: newAppURL)
+        guard newTeamID == runningTeamID else {
+            throw AppUpdateError.signingIdentityMismatch
+        }
+    }
+
+    private static func teamIdentifier(at appURL: URL) async throws -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = ["-dv", "--verbose=4", appURL.path]
+        let errorPipe = Pipe()
+        process.standardOutput = Pipe()
+        process.standardError = errorPipe
+        let output: String = try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { _ in
+                let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+        for line in output.split(separator: "\n") where line.hasPrefix("TeamIdentifier=") {
+            let value = line.dropFirst("TeamIdentifier=".count).trimmingCharacters(in: .whitespaces)
+            return value == "not set" ? nil : value
+        }
+        return nil
+    }
+
     nonisolated static func isTrustedReleaseURL(_ url: URL) -> Bool {
         guard url.scheme == "https", let host = url.host?.lowercased() else { return false }
         return host == "github.com"
@@ -247,17 +291,35 @@ actor AppUpdateService {
             || host.hasSuffix(".githubusercontent.com")
     }
 
-    /// Compare semantic-ish version strings ("2.2.2" vs "2.10.0") component-wise.
+    /// Compare semantic-ish version strings ("2.2.2" vs "2.10.0") component-wise,
+    /// treating a `-`-suffixed pre-release ("1.2.3-beta") as older than the same
+    /// numeric core without one ("1.2.3") rather than parsing it as equal.
     nonisolated func isNewer(_ candidate: String, than current: String) -> Bool {
-        func parts(_ s: String) -> [Int] {
-            s.split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
+        let (candidateCore, candidatePre) = Self.splitVersion(candidate)
+        let (currentCore, currentPre) = Self.splitVersion(current)
+        let coreComparison = Self.compareNumericComponents(candidateCore, currentCore)
+        if coreComparison != 0 { return coreComparison > 0 }
+        switch (candidatePre, currentPre) {
+        case (nil, nil): return false
+        case (nil, .some): return true
+        case (.some, nil): return false
+        case let (.some(candidateTag), .some(currentTag)): return candidateTag > currentTag
         }
-        let a = parts(candidate), b = parts(current)
+    }
+
+    private nonisolated static func splitVersion(_ version: String) -> (core: [Int], preRelease: String?) {
+        let pieces = version.split(separator: "-", maxSplits: 1)
+        let core = pieces[0].split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
+        let preRelease = pieces.count > 1 ? String(pieces[1]) : nil
+        return (core, preRelease)
+    }
+
+    private nonisolated static func compareNumericComponents(_ a: [Int], _ b: [Int]) -> Int {
         for i in 0..<max(a.count, b.count) {
             let x = i < a.count ? a[i] : 0
             let y = i < b.count ? b[i] : 0
-            if x != y { return x > y }
+            if x != y { return x > y ? 1 : -1 }
         }
-        return false
+        return 0
     }
 }
