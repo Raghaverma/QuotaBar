@@ -6,7 +6,7 @@ import AppKit
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     private var viewModel: AppViewModel?
     private var statusBarController: StatusBarController?
-    private var notchHubController: NotchHubController?
+    private var notchController: NotchController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)   // menu bar only
@@ -24,7 +24,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         viewModel = vm
         let statusBar = StatusBarController(viewModel: vm)
         statusBarController = statusBar
-        notchHubController = NotchHubController(
+        notchController = NotchController(
             viewModel: vm,
             onOpenSettings: { [weak statusBar] in statusBar?.openSettings() }
         )
