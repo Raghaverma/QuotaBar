@@ -160,18 +160,28 @@ final class AppViewModel {
         series.append(HistorySample(at: snapshot.updatedAt, remainingPercent: pct))
         if series.count > maxHistory { series.removeFirst(series.count - maxHistory) }
         usageHistory[id] = series
-        // Encode + write off the main actor — this fires on every successful poll,
-        // and with several providers × up to maxHistory samples each, doing it
-        // synchronously here was avoidable UI-thread disk I/O.
-        let snapshotToPersist = usageHistory
+        persistHistoryAsync()
+    }
+
+    /// The tail of the most recently enqueued history write. Every persist request
+    /// chains onto this instead of firing an independent `Task.detached`, so writes
+    /// are strictly ordered — a poll-triggered save and `removeProvider`'s save can
+    /// never race and let a slower, earlier-captured snapshot overwrite a faster,
+    /// newer one. Each link reads `usageHistory` only once it actually runs (never a
+    /// value captured before waiting), so it always persists the latest state.
+    private var historySaveTask: Task<Void, Never>?
+
+    private func persistHistoryAsync() {
+        let previous = historySaveTask
         let store = historyStore
-        Task.detached(priority: .utility) {
+        historySaveTask = Task.detached(priority: .utility) { [weak self] in
+            _ = await previous?.value
+            guard let self else { return }
+            let snapshot = await MainActor.run { self.usageHistory }
             do {
-                try store.save(snapshotToPersist)
+                try store.save(snapshot)
             } catch {
-                await MainActor.run { [weak self] in
-                    self?.report(title: "Couldn’t save usage history", error: error)
-                }
+                await MainActor.run { self.report(title: "Couldn’t save usage history", error: error) }
             }
         }
     }
@@ -312,11 +322,7 @@ final class AppViewModel {
         errors[id] = nil
         lastAlertKey[id] = nil
         usageHistory[id] = nil
-        do {
-            try historyStore.save(usageHistory)
-        } catch {
-            report(title: "Couldn’t update usage history", error: error)
-        }
+        persistHistoryAsync()
         if let service = removed?.auth.keychainService, let account = removed?.auth.keychainAccount {
             do {
                 try keychain.deleteSecret(service: service, account: account)

@@ -58,6 +58,17 @@ final class ReliabilityTests: XCTestCase {
         XCTAssertFalse(AppUpdateService.isTrustedReleaseURL(URL(string: "https://example.com/update.zip")!))
     }
 
+    func testVersionCompareToleratesMalformedVersionStrings() {
+        // A manifest version of "" or "-" previously trapped `splitVersion`'s array
+        // subscript with an out-of-range index, crashing the app during the routine
+        // background update check (and on the manual "Check for Updates" button).
+        let service = AppUpdateService()
+        XCTAssertFalse(service.isNewer("", than: "1.0.0"))
+        XCTAssertFalse(service.isNewer("-", than: "1.0.0"))
+        XCTAssertFalse(service.isNewer("--", than: "1.0.0"))
+        XCTAssertTrue(service.isNewer("2.0.0", than: "1.0.0"))
+    }
+
     func testOfficialCredentialFileUpdatesDefaultToOptIn() throws {
         let config = try JSONDecoder().decode(
             OfficialProviderConfig.self,

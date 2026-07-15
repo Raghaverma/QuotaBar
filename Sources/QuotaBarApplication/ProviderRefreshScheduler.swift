@@ -48,15 +48,28 @@ public final class ProviderRefreshScheduler {
         self.jitter = jitter
     }
 
-    /// (Re)start the loop with a fresh set of providers, seeding startup jitter.
+    /// (Re)start the loop with a fresh set of providers. Called on every config
+    /// mutation — not just provider changes — so a provider whose schedule is actually
+    /// unchanged (same id, same interval, still enabled) keeps its existing due time
+    /// instead of being reseeded with fresh jitter. Without this, an unrelated toggle
+    /// (e.g. "hide usage values") would force an immediate refresh burst across every
+    /// provider on every settings edit.
     public func restart(providers: [ProviderRefreshScheduleDescriptor]) {
+        let previousDescriptors = descriptors
+        let previousDueAt = nextDueAt
         stop()
         descriptors = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, $0) })
         let base = now()
-        nextDueAt = [:]
+        var due: [String: Date] = [:]
         for p in providers where p.enabled {
-            nextDueAt[p.id] = base.addingTimeInterval(jitter())
+            if let existing = previousDueAt[p.id],
+               previousDescriptors[p.id]?.pollIntervalSec == p.pollIntervalSec {
+                due[p.id] = existing
+            } else {
+                due[p.id] = base.addingTimeInterval(jitter())
+            }
         }
+        nextDueAt = due
         let runID = UUID()
         pollRunID = runID
         pollLoopTask = Task { [weak self] in

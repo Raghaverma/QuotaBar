@@ -88,20 +88,28 @@ actor AppUpdateService {
             throw AppUpdateError.untrustedDownloadLocation
         }
         let (tempURL, response) = try await session.download(from: url)
-        try validateHTTP(response)
-        guard let finalURL = response.url, Self.isTrustedReleaseURL(finalURL) else {
-            throw AppUpdateError.untrustedDownloadLocation
-        }
-        // Stream the file through SHA256 in 256 KB chunks to avoid loading the
-        // whole ZIP into memory at once.
-        let fileSize = try FileManager.default
-            .attributesOfItem(atPath: tempURL.path)[.size] as? Int ?? 0
-        guard fileSize == asset.size else {
-            throw AppUpdateError.unexpectedAssetSize
-        }
-        let hex = try streamingSHA256(at: tempURL)
-        guard hex.caseInsensitiveCompare(asset.sha256) == .orderedSame else {
-            throw AppUpdateError.checksumMismatch
+        // `URLSession.download(from:)` hands us ownership of this temp file — unlike the
+        // completion-handler variant, nothing else deletes it. Clean it up on every
+        // early-throw path below; the caller owns it only once this function returns.
+        do {
+            try validateHTTP(response)
+            guard let finalURL = response.url, Self.isTrustedReleaseURL(finalURL) else {
+                throw AppUpdateError.untrustedDownloadLocation
+            }
+            // Stream the file through SHA256 in 256 KB chunks to avoid loading the
+            // whole ZIP into memory at once.
+            let fileSize = try FileManager.default
+                .attributesOfItem(atPath: tempURL.path)[.size] as? Int ?? 0
+            guard fileSize == asset.size else {
+                throw AppUpdateError.unexpectedAssetSize
+            }
+            let hex = try streamingSHA256(at: tempURL)
+            guard hex.caseInsensitiveCompare(asset.sha256) == .orderedSame else {
+                throw AppUpdateError.checksumMismatch
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw error
         }
         return tempURL
     }
@@ -138,6 +146,7 @@ actor AppUpdateService {
 
         defer {
             try? fileManager.removeItem(at: tempDir)
+            try? fileManager.removeItem(at: zipURL)
         }
 
         let process = Process()
@@ -309,7 +318,8 @@ actor AppUpdateService {
 
     private nonisolated static func splitVersion(_ version: String) -> (core: [Int], preRelease: String?) {
         let pieces = version.split(separator: "-", maxSplits: 1)
-        let core = pieces[0].split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
+        guard let head = pieces.first else { return ([], nil) }
+        let core = head.split(separator: ".").map { Int($0.filter(\.isNumber)) ?? 0 }
         let preRelease = pieces.count > 1 ? String(pieces[1]) : nil
         return (core, preRelease)
     }
