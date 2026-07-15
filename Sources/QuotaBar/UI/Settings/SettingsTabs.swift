@@ -655,12 +655,16 @@ struct ConfigureProviderSheet: View {
                     notifyOnAuthError: notifyOnAuthError
                 )
                 if isRelay {
-                    config.providers[idx].relayConfig?.baseURL = baseURL
-                    config.providers[idx].relayConfig?.userID = userID.isEmpty ? nil : userID
-                    config.providers[idx].relayConfig?.groupID = groupID.isEmpty ? nil : groupID
+                    var relay = config.providers[idx].relayConfig ?? RelayProviderConfig()
+                    relay.baseURL = baseURL
+                    relay.userID = userID.isEmpty ? nil : userID
+                    relay.groupID = groupID.isEmpty ? nil : groupID
+                    config.providers[idx].relayConfig = relay
                 } else {
-                    config.providers[idx].officialConfig?.allowCredentialFileUpdates = allowCredentialFileUpdates
-                    config.providers[idx].officialConfig?.sourceMode = officialSourceMode
+                    var official = config.providers[idx].officialConfig ?? OfficialProviderConfig()
+                    official.allowCredentialFileUpdates = allowCredentialFileUpdates
+                    official.sourceMode = officialSourceMode
+                    config.providers[idx].officialConfig = official
                 }
             }
         }

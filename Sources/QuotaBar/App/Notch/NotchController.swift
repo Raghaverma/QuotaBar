@@ -26,7 +26,10 @@ final class NotchController {
     private var boundDisplayID: CGDirectDisplayID?
     private var lastLayoutSignature: String?
 
-    private var screenObserver: NSObjectProtocol?
+    // NSObjectProtocol observer tokens are safe to pass to `removeObserver` from any
+    // thread; `nonisolated(unsafe)` lets a nonisolated `deinit` release it without an
+    // async hop back to the main actor.
+    private nonisolated(unsafe) var screenObserver: NSObjectProtocol?
 
     init(viewModel: AppViewModel, onOpenSettings: @escaping () -> Void) {
         self.viewModel = viewModel
