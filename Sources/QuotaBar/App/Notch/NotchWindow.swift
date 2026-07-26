@@ -9,11 +9,15 @@ import AppKit
 ///   • there is no AppKit layout re-entrancy to guard against, and
 ///   • `NSTrackingArea`s stay valid for the window's whole lifetime.
 ///
-/// The obvious cost of a big fixed window — it would sit as an invisible click-blocking
-/// slab over whatever is beneath it — is eliminated by `NotchContainerView.hitTest`,
-/// which returns `nil` for every point outside the currently-visible island, so clicks
-/// in the transparent margins fall straight through to the app below. Public AppKit
-/// only; App Store-safe.
+/// A big fixed window would otherwise sit as an invisible click-blocking slab over
+/// whatever is beneath it. `NotchContainerView.hitTest` is *not* enough to prevent that:
+/// hit-testing only decides which view inside this window handles an event, and by then
+/// the window server has already routed the click here because the frame contains the
+/// point. Returning `nil` makes the click vanish — it is never re-routed to the app
+/// underneath. Only `ignoresMouseEvents` makes a region genuinely transparent across
+/// process boundaries, so `NotchController` toggles it as the cursor enters and leaves
+/// the visible island. The window therefore starts in the pass-through state.
+/// Public AppKit only; App Store-safe.
 final class NotchWindow: NSPanel {
     init(contentRect: NSRect, container: NotchContainerView) {
         super.init(
@@ -34,7 +38,9 @@ final class NotchWindow: NSPanel {
         // We want mouse-moved/entered/exited from our tracking area even while another
         // app is active and the panel is not key.
         acceptsMouseMovedEvents = true
-        ignoresMouseEvents = false
+        // Start transparent to clicks; the controller turns this off only while the
+        // cursor is actually over the visible island.
+        ignoresMouseEvents = true
         contentView = container
     }
 

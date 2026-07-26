@@ -8,6 +8,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
     private let refreshBuffer: TimeInterval = 5 * 60
     private let homeDirectory: () -> String
+    private let credentialCache = GeminiCredentialCache()
 
     init(
         descriptor: ProviderDescriptor,
@@ -51,8 +52,20 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         }
 
         var credentials = try loadCredentials()
+
+        // Persisting refreshed tokens is opt-in (`allowCredentialFileUpdates`, default
+        // off), so without an in-memory cache the file keeps handing back the same
+        // expired token and every poll re-runs the OAuth refresh.
+        let fileRefreshToken = credentials.refreshToken
+        if !forceRefresh,
+           let cached = credentialCache.value(derivedFrom: fileRefreshToken),
+           !needsRefresh(cached.expiresAt) {
+            credentials = cached
+        }
+
         if forceRefresh || needsRefresh(credentials.expiresAt) {
             credentials = try await refresh(credentials: credentials)
+            credentialCache.store(credentials, derivedFrom: fileRefreshToken)
         }
 
         do {
@@ -64,6 +77,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         } catch ProviderError.unauthorized {
             // Try to refresh and retry
             credentials = try await refresh(credentials: credentials)
+            credentialCache.store(credentials, derivedFrom: fileRefreshToken)
             return try await requestSnapshot(
                 accessToken: credentials.accessToken,
                 settings: settings,
@@ -238,16 +252,12 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         request.timeoutInterval = 15
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
-        let form = [
+        request.httpBody = Data(FormURLEncoding.body([
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
             "client_id": client.id,
             "client_secret": client.secret
-        ]
-
-        var components = URLComponents()
-        components.queryItems = form.map { URLQueryItem(name: $0.key, value: $0.value) }
-        request.httpBody = components.query?.data(using: .utf8)
+        ]).utf8)
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -388,20 +398,15 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
     }
 
     private static func runCommand(executable: String, arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                return output.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        } catch {}
-        return nil
+        // Via the shared runner: pipes are drained concurrently and the child cannot
+        // hang the caller indefinitely. The previous inline version also inherited this
+        // process's stderr, leaking `which`'s "not found" noise into the app's log.
+        guard let result = ShellCommand.run(executable: executable, arguments: arguments, timeout: 10),
+              !result.timedOut else {
+            return nil
+        }
+        let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return output.isEmpty ? nil : output
     }
 
     internal static func parseClientSecrets(in source: String) -> (id: String, secret: String)? {
@@ -668,9 +673,26 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         )
     }
 
+    /// Keys whose name states the unit outright: the value is already a percentage, so
+    /// `1` means one percent. Scaling these by 100 turned a nearly-untouched quota into
+    /// a fully-consumed one — the worst possible direction for a usage alert.
+    private static let percentKeys = ["usedPercent", "used_percent", "percentage", "percentUsed", "percent"]
+    /// Keys whose name states the value is a 0…1 ratio.
+    private static let ratioKeys = ["usageRatio", "usage_ratio"]
+    /// `utilization` is genuinely ambiguous — Gemini has been observed emitting both
+    /// `0.40` (ratio) and `20.0` (percent) — so it keeps the magnitude heuristic.
+    private static let ambiguousKeys = ["utilization"]
+
     private static func parseUsedPercent(dict: [String: Any]) -> Double? {
-        let keys = ["utilization", "usedPercent", "used_percent", "percentage", "percentUsed", "percent", "usageRatio"]
-        for key in keys {
+        for key in percentKeys {
+            guard let value = OfficialValueParser.double(dict[key]) else { continue }
+            return value
+        }
+        for key in ratioKeys {
+            guard let value = OfficialValueParser.double(dict[key]) else { continue }
+            return value * 100
+        }
+        for key in ambiguousKeys {
             guard let value = OfficialValueParser.double(dict[key]) else { continue }
             return value <= 1 ? value * 100 : value
         }
@@ -678,6 +700,7 @@ final class GeminiProvider: UsageProvider, @unchecked Sendable {
         let remainingFractionKeys = ["remainingFraction", "remaining_fraction", "remainingRatio", "remaining_ratio", "fractionRemaining"]
         for key in remainingFractionKeys {
             guard let value = OfficialValueParser.double(dict[key]) else { continue }
+            // These are ratio-named, so a value above 1 is already a percentage.
             let remainingPercent = value <= 1 ? value * 100 : value
             return 100 - remainingPercent
         }
@@ -790,6 +813,28 @@ private struct OfficialValueParser {
     static func epochDate(seconds value: Any?) -> Date? {
         guard let s = double(value) else { return nil }
         return Date(timeIntervalSince1970: s)
+    }
+}
+
+/// In-memory cache of refreshed credentials, keyed by the refresh token that produced
+/// them so it self-invalidates when the user re-authenticates but survives rotation.
+private final class GeminiCredentialCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sourceRefreshToken: String?
+    private var cached: GeminiCredentials?
+
+    func value(derivedFrom fileRefreshToken: String?) -> GeminiCredentials? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard sourceRefreshToken == fileRefreshToken else { return nil }
+        return cached
+    }
+
+    func store(_ credentials: GeminiCredentials, derivedFrom fileRefreshToken: String?) {
+        lock.lock()
+        sourceRefreshToken = fileRefreshToken
+        cached = credentials
+        lock.unlock()
     }
 }
 

@@ -30,8 +30,8 @@ public struct UsageQuotaWindow: Codable, Equatable, Identifiable, Sendable {
     ) {
         self.id = id
         self.title = title
-        self.remainingPercent = remainingPercent
-        self.usedPercent = usedPercent
+        self.remainingPercent = Self.sanitizedPercent(remainingPercent)
+        self.usedPercent = Self.sanitizedPercent(usedPercent)
         self.resetAt = resetAt
         self.kind = kind
         self.resetSource = resetSource
@@ -45,8 +45,12 @@ public struct UsageQuotaWindow: Codable, Equatable, Identifiable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
-        remainingPercent = try c.decodeIfPresent(Double.self, forKey: .remainingPercent) ?? 0
-        usedPercent = try c.decodeIfPresent(Double.self, forKey: .usedPercent) ?? 0
+        remainingPercent = Self.sanitizedPercent(
+            try c.decodeIfPresent(Double.self, forKey: .remainingPercent) ?? 0
+        )
+        usedPercent = Self.sanitizedPercent(
+            try c.decodeIfPresent(Double.self, forKey: .usedPercent) ?? 0
+        )
         resetAt = try c.decodeIfPresent(Date.self, forKey: .resetAt)
         kind = try c.decodeIfPresent(UsageQuotaKind.self, forKey: .kind) ?? .custom
         resetSource = try c.decodeIfPresent(UsageQuotaResetSource.self, forKey: .resetSource) ?? .unknown
@@ -54,5 +58,15 @@ public struct UsageQuotaWindow: Codable, Equatable, Identifiable, Sendable {
         serverClockSkew = try c.decodeIfPresent(TimeInterval.self, forKey: .serverClockSkew)
         confidence = try c.decodeIfPresent(UsageQuotaResetConfidence.self, forKey: .confidence) ?? .unknown
         windowIdentity = try c.decodeIfPresent(String.self, forKey: .windowIdentity)
+    }
+
+    /// Percentages come straight from provider JSON, and the value parsers accept
+    /// *strings* — where `Double("nan")` and `Double("inf")` both succeed. A non-finite
+    /// (or out-of-range) percentage reaching the UI traps the moment anything calls
+    /// `Int(_:)` on it, which every readout does. Normalize once, here at the boundary,
+    /// rather than defending at each of the display call sites.
+    static func sanitizedPercent(_ value: Double) -> Double {
+        guard value.isFinite else { return 0 }
+        return min(max(value, 0), 100)
     }
 }

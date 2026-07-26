@@ -5,18 +5,15 @@ import QuotaBarDomain
 /// ChatGPT wham usage endpoint to report actual account quota and windows dynamically.
 final class CodexProvider: UsageProvider, @unchecked Sendable {
     let descriptor: ProviderDescriptor
-    private let keychain: KeychainService
     private let authFileURL: URL
     private let session: URLSession
 
     init(
         descriptor: ProviderDescriptor,
-        keychain: KeychainService,
         authFileURL: URL? = nil,
         session: URLSession = .shared
     ) {
         self.descriptor = descriptor
-        self.keychain = keychain
         self.authFileURL = authFileURL
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".codex/auth.json")
@@ -177,8 +174,11 @@ final class CodexProvider: UsageProvider, @unchecked Sendable {
         request.timeoutInterval = 15
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
-        let bodyString = "grant_type=refresh_token&client_id=app_EMoamEEZ73f0CkXaXp7hrann&refresh_token=\(refreshToken)"
-        request.httpBody = bodyString.data(using: .utf8)
+        request.httpBody = Data(FormURLEncoding.body([
+            "grant_type": "refresh_token",
+            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
+            "refresh_token": refreshToken
+        ]).utf8)
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {

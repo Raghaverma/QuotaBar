@@ -25,8 +25,14 @@ enum AtomicCredentialFileWriter {
         // world-readable window for brand-new credential files.
         let tempURL = url.appendingPathExtension("quotabar-tmp-\(UUID().uuidString)")
         try data.write(to: tempURL, options: .atomic)
-        let permissions = attributes[.posixPermissions] ?? NSNumber(value: 0o600)
-        try manager.setAttributes([.posixPermissions: permissions], ofItemAtPath: tempURL.path)
-        _ = try manager.replaceItemAt(url, withItemAt: tempURL, options: .usingNewMetadataOnly)
+        do {
+            let permissions = attributes[.posixPermissions] ?? NSNumber(value: 0o600)
+            try manager.setAttributes([.posixPermissions: permissions], ofItemAtPath: tempURL.path)
+            _ = try manager.replaceItemAt(url, withItemAt: tempURL, options: .usingNewMetadataOnly)
+        } catch {
+            // Never leave a stray copy of the OAuth tokens lying next to the real file.
+            try? manager.removeItem(at: tempURL)
+            throw error
+        }
     }
 }

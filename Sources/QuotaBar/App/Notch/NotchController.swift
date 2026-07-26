@@ -23,13 +23,19 @@ final class NotchController {
     private var window: NotchWindow?
     private var container: NotchContainerView?
     private var geometry: NotchGeometry?
-    private var boundDisplayID: CGDirectDisplayID?
     private var lastLayoutSignature: String?
 
     // NSObjectProtocol observer tokens are safe to pass to `removeObserver` from any
     // thread; `nonisolated(unsafe)` lets a nonisolated `deinit` release it without an
     // async hop back to the main actor.
     private nonisolated(unsafe) var screenObserver: NSObjectProtocol?
+
+    /// Cursor sampling keeps hover alive while the window is click-through. 30 Hz is
+    /// imperceptible to the user and costs one rect test per tick.
+    private static let hoverSampleInterval: TimeInterval = 1.0 / 30.0
+    // `nonisolated(unsafe)` mirrors `screenObserver`: it lets the nonisolated deinit
+    // invalidate the timer without hopping back to the main actor.
+    private nonisolated(unsafe) var hoverTimer: Timer?
 
     init(viewModel: AppViewModel, onOpenSettings: @escaping () -> Void) {
         self.viewModel = viewModel
@@ -43,18 +49,26 @@ final class NotchController {
         }
 
         observeConfig()
+        rebuildIfNeeded(force: true)
     }
 
     deinit {
         if let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
         }
+        hoverTimer?.invalidate()
     }
 
     // MARK: Observation
 
     /// Re-arm on every relevant config change. Only the fields that change the *window's
     /// geometry* trigger a rebuild; the SwiftUI view observes everything else itself.
+    ///
+    /// Re-arming must not itself rebuild: this runs after *every* config mutation, so a
+    /// forced rebuild here would tear down and recreate the panel (and its hosting view
+    /// and tracking areas) on every unrelated settings toggle, making `lastLayoutSignature`
+    /// pointless and destroying the island mid-interaction. The initial build is the
+    /// initializer's job.
     private func observeConfig() {
         withObservationTracking {
             _ = viewModel.config.notchEnabled
@@ -62,11 +76,10 @@ final class NotchController {
             _ = viewModel.config.providers.filter(\.enabled).count
         } onChange: { [weak self] in
             Task { @MainActor in
-                self?.rebuildIfNeeded(force: false)
                 self?.observeConfig()
+                self?.rebuildIfNeeded(force: false)
             }
         }
-        rebuildIfNeeded(force: true)
     }
 
     // MARK: Build / teardown
@@ -99,7 +112,6 @@ final class NotchController {
     private func build(geometry: NotchGeometry, providerCount: Int) {
         teardown()
         self.geometry = geometry
-        self.boundDisplayID = geometry.displayID
 
         let windowWidth = max(geometry.notchWidth, Self.expandedWidth)
         let panelHeight = NotchMetrics.panelHeight(providerCount: providerCount)
@@ -127,7 +139,8 @@ final class NotchController {
         if #available(macOS 13.3, *) { hosting.sizingOptions = [] }
         container.addSubview(hosting)
 
-        // hitTest passthrough: only the currently-visible island is "solid".
+        // Second line of defence behind `ignoresMouseEvents`: even while the window is
+        // accepting events, only the visible island is "solid".
         container.islandRect = { [weak self] in self?.currentIslandRectLocal() ?? .zero }
         container.onPointerMove = { [weak self] in self?.evaluateHover() }
 
@@ -138,14 +151,17 @@ final class NotchController {
 
         self.container = container
         self.window = window
+
+        startCursorTracking()
+        evaluateHover()
     }
 
     private func teardown() {
+        stopCursorTracking()
         window?.orderOut(nil)
         window = nil
         container = nil
         geometry = nil
-        boundDisplayID = nil
         link.pointerInside = false
         link.isExpanded = false
     }
@@ -178,11 +194,33 @@ final class NotchController {
     /// The interactive island rect in global/screen coordinates, for cursor hit-testing.
     private func currentIslandRectScreen() -> CGRect {
         guard let window, let geometry else { return .zero }
-        if link.isExpanded { return window.frame }
-        let f = window.frame
-        let w = geometry.notchWidth
-        let h = geometry.notchHeight
-        return CGRect(x: f.midX - w / 2, y: f.maxY - h, width: w, height: h)
+        return Self.islandRect(
+            windowFrame: window.frame,
+            notchWidth: geometry.notchWidth,
+            notchHeight: geometry.notchHeight,
+            isExpanded: link.isExpanded
+        )
+    }
+
+    /// Where the island is *actually visible* within its (much larger) window.
+    ///
+    /// Collapsed this is just the physical notch at top-centre — a small fraction of the
+    /// window, which is sized for the fully expanded panel. Everything outside it is
+    /// empty space that must not intercept the cursor. Pure and static so the
+    /// pass-through decision can be tested without an AppKit window.
+    nonisolated static func islandRect(
+        windowFrame: CGRect,
+        notchWidth: CGFloat,
+        notchHeight: CGFloat,
+        isExpanded: Bool
+    ) -> CGRect {
+        if isExpanded { return windowFrame }
+        return CGRect(
+            x: windowFrame.midX - notchWidth / 2,
+            y: windowFrame.maxY - notchHeight,
+            width: notchWidth,
+            height: notchHeight
+        )
     }
 
     /// Called on every tracked mouse movement. Pure hit-test: is the cursor within the
@@ -192,5 +230,43 @@ final class NotchController {
     private func evaluateHover() {
         let inside = currentIslandRectScreen().contains(NSEvent.mouseLocation)
         if link.pointerInside != inside { link.pointerInside = inside }
+        // The window is far larger than the visible island (it is sized for the fully
+        // expanded panel and never resized). Everything outside the island must be
+        // click-through, and only `ignoresMouseEvents` achieves that across processes —
+        // view hit-testing runs after the window server has already claimed the event.
+        if let window, window.ignoresMouseEvents == inside {
+            window.ignoresMouseEvents = !inside
+        }
+    }
+
+    // MARK: Cursor tracking
+
+    /// Cursor tracking cannot rely on the container's `NSTrackingArea`: the moment the
+    /// window turns click-through — which is most of the time, so the margins stay
+    /// usable — it stops receiving mouse events entirely, and the hover state would
+    /// latch, leaving the window stuck in whichever mode it was last in.
+    ///
+    /// Event monitors are not a dependable substitute either. macOS coalesces
+    /// `.mouseMoved` aggressively: measured against this window, a global monitor
+    /// observed only one of twelve cursor movements. Missing a movement means missing
+    /// the transition out of the island, which strands the window opaque and swallows
+    /// every click underneath it — exactly the bug this is meant to fix.
+    ///
+    /// Sampling `NSEvent.mouseLocation` on a timer has neither problem: it needs no
+    /// permissions, cannot be coalesced away, and reads the true cursor position no
+    /// matter which app owns it. The work per tick is one rect containment test.
+    private func startCursorTracking() {
+        stopCursorTracking()
+        let timer = Timer(timeInterval: Self.hoverSampleInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.evaluateHover() }
+        }
+        // `.common` so sampling continues during menu tracking and window drags.
+        RunLoop.main.add(timer, forMode: .common)
+        hoverTimer = timer
+    }
+
+    private func stopCursorTracking() {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
     }
 }

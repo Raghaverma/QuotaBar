@@ -6,7 +6,7 @@ final class MenuBarWidgetRendererTests: XCTestCase {
     private func entry(_ pct: Double?) -> StatusBarDisplayEntry {
         StatusBarDisplayEntry(
             providerID: "codex", name: "Codex",
-            percentText: pct.map { "\(Int($0))%" } ?? "—",
+            percentText: pct.map { String(format: "%.0f%%", $0) } ?? "—",
             remainingPercent: pct, isHealthy: true
         )
     }
@@ -19,6 +19,19 @@ final class MenuBarWidgetRendererTests: XCTestCase {
             XCTAssertNotNil(image, "expected an image for style \(style)")
             XCTAssertGreaterThan(image!.size.width, 0)
             XCTAssertGreaterThan(image!.size.height, 0)
+        }
+    }
+
+    /// A provider-supplied quota window carries a raw, unclamped percentage. Out-of-range
+    /// values must not drive gauge geometry (over-filled bar / >360° ring sweep).
+    func testOutOfRangePercentagesStillRender() {
+        for pct in [-40.0, 0, 100, 180, .infinity] {
+            for style in MenuBarWidgetStyle.allCases {
+                let image = MenuBarWidgetRenderer.image(
+                    entries: [entry(pct)], style: style, history: [:], appearanceDark: false
+                )
+                XCTAssertNotNil(image, "expected an image for \(pct) in style \(style)")
+            }
         }
     }
 

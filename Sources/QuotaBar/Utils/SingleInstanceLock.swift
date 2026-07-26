@@ -16,4 +16,14 @@ final class SingleInstanceLock: @unchecked Sendable {
         let result = flock(fileDescriptor, LOCK_EX | LOCK_NB)
         return result == 0
     }
+
+    /// Drop the lock so a successor process can take it. Required before relaunching
+    /// ourselves during an update: the replacement starts while this process is still
+    /// alive, and would otherwise see the lock held and quit immediately.
+    func release() {
+        guard fileDescriptor != -1 else { return }
+        flock(fileDescriptor, LOCK_UN)
+        close(fileDescriptor)
+        fileDescriptor = -1
+    }
 }

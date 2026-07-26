@@ -32,7 +32,7 @@ struct ProviderFactoryRegistry {
         let placeholder: Maker = { d, _ in PlaceholderProvider(descriptor: d) }
 
         var makers: [ProviderType: Maker] = [
-            .codex: { d, deps in CodexProvider(descriptor: d, keychain: deps.keychain) },
+            .codex: { d, _ in CodexProvider(descriptor: d) },
             .claude: { d, _ in ClaudeProvider(descriptor: d) },
             .gemini: { d, _ in GeminiProvider(descriptor: d) },
             .relay: relay,

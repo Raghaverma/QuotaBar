@@ -212,8 +212,15 @@ actor AppUpdateService {
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = []
+        // Without this, LaunchServices sees an app with this bundle id already running
+        // and simply activates *us* instead of starting the freshly installed binary —
+        // so the completion fires, we terminate, and the user is left with no app.
+        configuration.createsNewApplicationInstance = true
 
         await MainActor.run {
+            // Hand the single-instance lock over before the successor launches;
+            // otherwise it finds the lock still held by this process and quits.
+            SingleInstanceLock.shared.release()
             NSWorkspace.shared.openApplication(at: mainBundleURL, configuration: configuration) { _, error in
                 if let error = error {
                     NSLog("Failed to relaunch application: \(error)")
@@ -232,23 +239,16 @@ actor AppUpdateService {
         }
     }
 
+    /// Signature checks are fail-closed: if `codesign` cannot be run, hangs, or reports
+    /// anything but success, we refuse the update rather than installing unverified code.
     private func verifyCodeSignature(at appURL: URL) async throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        process.arguments = ["--verify", "--deep", "--strict", appURL.path]
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            process.terminationHandler = { proc in
-                if proc.terminationStatus == 0 {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: AppUpdateError.invalidCodeSignature)
-                }
-            }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+        let result = await ShellCommand.runAsync(
+            executable: "/usr/bin/codesign",
+            arguments: ["--verify", "--deep", "--strict", appURL.path],
+            timeout: 120
+        )
+        guard let result, !result.timedOut, result.status == 0 else {
+            throw AppUpdateError.invalidCodeSignature
         }
     }
 
@@ -269,23 +269,18 @@ actor AppUpdateService {
     }
 
     private static func teamIdentifier(at appURL: URL) async throws -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        process.arguments = ["-dv", "--verbose=4", appURL.path]
-        let errorPipe = Pipe()
-        process.standardOutput = Pipe()
-        process.standardError = errorPipe
-        let output: String = try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { _ in
-                let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
-            }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+        // `codesign -dv` reports on stderr. Reading that pipe only after the process
+        // exits risks the classic full-buffer deadlock, and the previous version had no
+        // timeout at all — a wedged codesign would hang the install forever.
+        let result = await ShellCommand.runAsync(
+            executable: "/usr/bin/codesign",
+            arguments: ["-dv", "--verbose=4", appURL.path],
+            timeout: 60
+        )
+        guard let result, !result.timedOut else {
+            throw AppUpdateError.invalidCodeSignature
         }
+        let output = result.stderr
         for line in output.split(separator: "\n") where line.hasPrefix("TeamIdentifier=") {
             let value = line.dropFirst("TeamIdentifier=".count).trimmingCharacters(in: .whitespaces)
             return value == "not set" ? nil : value

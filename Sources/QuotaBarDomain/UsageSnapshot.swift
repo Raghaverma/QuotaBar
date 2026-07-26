@@ -45,9 +45,9 @@ public struct UsageSnapshot: Codable, Identifiable, Equatable, Sendable {
         self.status = status
         self.fetchHealth = fetchHealth
         self.valueFreshness = valueFreshness
-        self.remaining = remaining
-        self.used = used
-        self.limit = limit
+        self.remaining = Self.finite(remaining)
+        self.used = Self.finite(used)
+        self.limit = Self.finite(limit)
         self.unit = unit
         self.updatedAt = updatedAt
         self.note = note
@@ -66,9 +66,9 @@ public struct UsageSnapshot: Codable, Identifiable, Equatable, Sendable {
         status = try c.decodeIfPresent(SnapshotStatus.self, forKey: .status) ?? .ok
         fetchHealth = try c.decodeIfPresent(FetchHealth.self, forKey: .fetchHealth) ?? .ok
         valueFreshness = try c.decodeIfPresent(ValueFreshness.self, forKey: .valueFreshness) ?? .live
-        remaining = try c.decodeIfPresent(Double.self, forKey: .remaining)
-        used = try c.decodeIfPresent(Double.self, forKey: .used)
-        limit = try c.decodeIfPresent(Double.self, forKey: .limit)
+        remaining = Self.finite(try c.decodeIfPresent(Double.self, forKey: .remaining))
+        used = Self.finite(try c.decodeIfPresent(Double.self, forKey: .used))
+        limit = Self.finite(try c.decodeIfPresent(Double.self, forKey: .limit))
         unit = try c.decodeIfPresent(String.self, forKey: .unit) ?? "quota"
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
@@ -79,6 +79,14 @@ public struct UsageSnapshot: Codable, Identifiable, Equatable, Sendable {
         diagnosticCode = try c.decodeIfPresent(String.self, forKey: .diagnosticCode)
         extras = try c.decodeIfPresent([String: String].self, forKey: .extras) ?? [:]
         rawMeta = try c.decodeIfPresent([String: String].self, forKey: .rawMeta) ?? [:]
+    }
+
+    /// Drop non-finite provider values. These arrive via parsers that accept strings,
+    /// where `Double("nan")`/`Double("inf")` succeed — and they trap the first time a
+    /// readout calls `Int(_:)`. Treat "not a number" as "no value".
+    static func finite(_ value: Double?) -> Double? {
+        guard let value, value.isFinite else { return nil }
+        return value
     }
 
     /// Convenience for the common "remaining as a percentage" computation.

@@ -70,6 +70,11 @@ final class RelayProvider: UsageProvider, @unchecked Sendable {
         if let userIDHeader = manifest.balanceRequest.userIDHeader, let userID = relay.userID {
             request.setValue(userID, forHTTPHeaderField: userIDHeader)
         }
+        // Settings collected a Group ID and persisted it, but nothing ever sent it.
+        // Mirror the user-id handling so the field actually reaches the site.
+        if let groupIDHeader = manifest.balanceRequest.groupIDHeader, let groupID = relay.groupID {
+            request.setValue(groupID, forHTTPHeaderField: groupIDHeader)
+        }
         return request
     }
 

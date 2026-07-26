@@ -223,8 +223,12 @@ struct NotchView: View {
     // MARK: Hover state machine
 
     private func handleHover(_ hovering: Bool) {
-        guard viewModel.config.notchExpandOnHover else { return }
         if hovering {
+            // Only *opening* is gated by the preference. Gating the whole handler made
+            // the close path conditional too, so an already-open panel could be stranded
+            // expanded — a wide slab of the screen left interactive with nothing able to
+            // collapse it. Closing must always be honoured.
+            guard viewModel.config.notchExpandOnHover else { return }
             stickyCloseTask?.cancel()
             stickyCloseTask = nil
             guard !isExpanded else { return }

@@ -58,7 +58,10 @@ public final class ProviderRefreshScheduler {
         let previousDescriptors = descriptors
         let previousDueAt = nextDueAt
         stop()
-        descriptors = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, $0) })
+        // Tolerate duplicate ids (a hand-edited or partially-merged config can carry
+        // two entries sharing one id): keep the last one rather than trapping the way
+        // `Dictionary(uniqueKeysWithValues:)` would, which crashed the app at launch.
+        descriptors = Dictionary(providers.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let base = now()
         var due: [String: Date] = [:]
         for p in providers where p.enabled {
@@ -126,10 +129,17 @@ public final class ProviderRefreshScheduler {
             await descriptor.refresh(force)
             guard let self else { return }
             self.inFlight.remove(id)
-            let failures = descriptor.failureCount()
+            // The config can change while a refresh is in flight. Only schedule the
+            // next run if this provider still exists on the *same* schedule: otherwise
+            // we would resurrect a provider the user just disabled or removed, or
+            // overwrite the freshly-seeded due time of a re-intervalled one with a
+            // delay computed from its old interval.
+            guard let current = self.descriptors[id],
+                  current.enabled,
+                  current.pollIntervalSec == descriptor.pollIntervalSec else { return }
             let delay = BackoffPolicy.delaySeconds(
                 baseInterval: descriptor.pollIntervalSec,
-                consecutiveFailures: failures
+                consecutiveFailures: descriptor.failureCount()
             )
             self.nextDueAt[id] = self.now().addingTimeInterval(Double(delay))
         }

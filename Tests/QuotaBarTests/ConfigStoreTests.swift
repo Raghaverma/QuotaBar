@@ -47,6 +47,28 @@ final class ConfigStoreTests: XCTestCase {
         XCTAssertTrue(store.lastLoadWasLossy)
     }
 
+    /// Provider `id` keys the provider map, the snapshot/history dictionaries and the
+    /// scheduler's descriptor map. A hand-edited config can repeat one; loading must
+    /// collapse the duplicates rather than letting them reach (and trap) the scheduler.
+    func testDuplicateProviderIDsAreCollapsedOnLoad() throws {
+        let json = #"""
+        {
+          "language": "en",
+          "providers": [
+            { "id": "codex", "type": "codex", "family": "official", "name": "First" },
+            { "id": "codex", "type": "codex", "family": "official", "name": "Second" }
+          ]
+        }
+        """#
+        try Data(json.utf8).write(to: tempDir.appendingPathComponent("config.json"))
+
+        let config = try ConfigStore(baseDirectoryURL: tempDir).load()
+        let codexEntries = config.providers.filter { $0.id == "codex" }
+        XCTAssertEqual(codexEntries.count, 1, "duplicate provider ids must be collapsed")
+        XCTAssertEqual(codexEntries.first?.name, "First", "the first entry wins")
+        XCTAssertEqual(config.providers.count, Set(config.providers.map(\.id)).count)
+    }
+
     func testCorruptPrimaryFallsBackToLastKnownGood() throws {
         let store = ConfigStore(baseDirectoryURL: tempDir)
         var config = AppConfig.default

@@ -40,6 +40,7 @@ final class ConfigStore: @unchecked Sendable {
     /// Try every snapshot in order, repairing along the way; return default if all fail.
     func load() throws -> AppConfig {
         lastLoadWasLossy = false
+        var preservedAnything = false
         for url in [primaryURL, shadowURL, lastKnownGoodURL] {
             guard fileManager.fileExists(atPath: url.path),
                   let data = try? Data(contentsOf: url) else { continue }
@@ -50,12 +51,21 @@ final class ConfigStore: @unchecked Sendable {
                 if dropCounter.droppedCount > 0 {
                     lastLoadWasLossy = true
                     // Preserve the raw bytes so nothing is silently discarded.
-                    try? data.write(to: preservedURL)
+                    if !preservedAnything { try? data.write(to: preservedURL) }
+                } else {
+                    // This file decoded cleanly, so it *is* the last known good state.
+                    // Promoting on read (rather than on write) is what makes the copy
+                    // meaningful: writing it on every save meant a config that saved
+                    // fine but fails to load would immediately destroy the only
+                    // known-good copy it exists to fall back to.
+                    try? data.write(to: lastKnownGoodURL, options: .atomic)
                 }
                 return Self.mergingNewDefaultProviders(into: config)
-            } else {
-                // Invalid file — stash it before moving on.
+            } else if !preservedAnything {
+                // Invalid file — stash the *first* failure. Later, also-corrupt
+                // candidates must not overwrite the earliest evidence.
                 try? data.write(to: preservedURL)
+                preservedAnything = true
             }
         }
         return AppConfig.default
@@ -64,19 +74,30 @@ final class ConfigStore: @unchecked Sendable {
     /// Add newly shipped providers without changing or re-enabling existing user entries.
     private static func mergingNewDefaultProviders(into config: AppConfig) -> AppConfig {
         var merged = config
-        let existingIDs = Set(config.providers.map(\.id))
+        merged.providers = deduplicatingIDs(config.providers)
+        let existingIDs = Set(merged.providers.map(\.id))
         merged.providers.append(contentsOf: ProviderDefaultCatalog.seedProviders().filter {
             !existingIDs.contains($0.id)
         })
         return merged
     }
 
-    /// Write the primary file plus shadow and last-known-good copies.
+    /// Provider `id` is the primary key of the whole app: it keys the provider map, the
+    /// snapshot and history dictionaries, and the scheduler's descriptor map. A config
+    /// file is user-editable and can be merged or restored by hand, so duplicates are
+    /// reachable — and downstream they used to trap. Keep the first entry for each id.
+    private static func deduplicatingIDs(_ providers: [ProviderDescriptor]) -> [ProviderDescriptor] {
+        var seen: Set<String> = []
+        return providers.filter { seen.insert($0.id).inserted }
+    }
+
+    /// Write the primary file plus a shadow copy. The last-known-good snapshot is
+    /// deliberately *not* written here — `load()` promotes it only once a file has
+    /// actually been read back successfully.
     func save(_ config: AppConfig) throws {
         let data = try Self.makeEncoder().encode(config)
         try data.write(to: primaryURL, options: .atomic)
         try? data.write(to: shadowURL, options: .atomic)
-        try? data.write(to: lastKnownGoodURL, options: .atomic)
     }
 
     /// Remove all snapshots + import markers.

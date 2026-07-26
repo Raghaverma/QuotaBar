@@ -7,6 +7,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     private let session: URLSession
     private let refreshBuffer: TimeInterval = 5 * 60
     private let homeDirectory: () -> String
+    private let credentialCache = ClaudeCredentialCache()
 
     init(
         descriptor: ProviderDescriptor,
@@ -50,8 +51,19 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             throw ProviderError.unauthorizedDetail("inference-only token cannot read Claude quota")
         }
 
+        // Prefer a still-valid token obtained by an earlier refresh. `persist` is opt-in
+        // (`allowCredentialFileUpdates`, default off), so without this cache the file
+        // keeps yielding the same expired token and every single poll burns another
+        // round-trip to the OAuth endpoint — every 5 minutes, indefinitely.
+        let fileRefreshToken = credentials.refreshToken
+        if let cached = credentialCache.value(derivedFrom: fileRefreshToken),
+           !needsRefresh(expiresAtMs: cached.expiresAtMs) {
+            credentials = cached
+        }
+
         if needsRefresh(expiresAtMs: credentials.expiresAtMs) {
             credentials = try await refresh(credentials: credentials)
+            credentialCache.store(credentials, derivedFrom: fileRefreshToken)
         }
 
         func snapshot(using creds: ClaudeCredentials) async throws -> UsageSnapshot {
@@ -72,6 +84,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
             // The token was rejected before its stated expiry — refresh once and
             // retry rather than surfacing a spurious re-authorize prompt.
             credentials = try await refresh(credentials: credentials)
+            credentialCache.store(credentials, derivedFrom: fileRefreshToken)
             return try await snapshot(using: credentials)
         }
     }
@@ -266,7 +279,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
     }
 
     private func runClaudeCLIUsageOnce(executable: String, environment: [String: String]) throws -> UsageSnapshot {
-        guard let result = Self.runCommand(
+        guard let result = ShellCommand.run(
             executable: executable,
             arguments: ["/usage", "--allowed-tools", ""],
             environment: environment,
@@ -291,7 +304,7 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         } catch {
             let lower = result.stdout.lowercased()
             if lower.contains("cost") || lower.contains("api usage billing") || lower.contains("subscription required") {
-                if let costResult = Self.runCommand(
+                if let costResult = ShellCommand.run(
                     executable: executable,
                     arguments: ["/cost", "--allowed-tools", ""],
                     environment: environment,
@@ -695,90 +708,6 @@ final class ClaudeProvider: UsageProvider, @unchecked Sendable {
         }
         return false
     }
-
-    private static func runCommand(
-        executable: String,
-        arguments: [String],
-        environment: [String: String]? = nil,
-        timeout: TimeInterval = 25
-    ) -> ShellCommandResult? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let env = environment {
-            process.environment = env
-        }
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-
-        // Drain both pipes as data arrives rather than after waitUntilExit(): a child that
-        // writes more than the OS pipe buffer (~64KB) before anyone reads will otherwise block
-        // on write() while we block on waitUntilExit() — a classic Process+Pipe deadlock.
-        let stdoutBox = PipeAccumulator()
-        let stderrBox = PipeAccumulator()
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            stdoutBox.append(handle.availableData)
-        }
-        errPipe.fileHandleForReading.readabilityHandler = { handle in
-            stderrBox.append(handle.availableData)
-        }
-
-        do {
-            try process.run()
-        } catch {
-            outPipe.fileHandleForReading.readabilityHandler = nil
-            errPipe.fileHandleForReading.readabilityHandler = nil
-            return nil
-        }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in semaphore.signal() }
-        let timedOut = semaphore.wait(timeout: .now() + timeout) == .timedOut
-        if timedOut {
-            process.terminate()
-            if semaphore.wait(timeout: .now() + 2) == .timedOut, process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
-        }
-        process.waitUntilExit()
-
-        outPipe.fileHandleForReading.readabilityHandler = nil
-        errPipe.fileHandleForReading.readabilityHandler = nil
-
-        let stdout = String(data: stdoutBox.collected(), encoding: .utf8) ?? ""
-        let stderr = String(data: stderrBox.collected(), encoding: .utf8) ?? ""
-        return ShellCommandResult(stdout: stdout, stderr: stderr, status: process.terminationStatus, timedOut: timedOut)
-    }
-}
-
-/// Thread-safe byte accumulator for draining a `Pipe` concurrently with process execution.
-private final class PipeAccumulator: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        data.append(chunk)
-        lock.unlock()
-    }
-
-    func collected() -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return data
-    }
-}
-
-// MARK: - Shell Helper
-
-private struct ShellCommandResult {
-    let stdout: String
-    let stderr: String
-    let status: Int32
-    let timedOut: Bool
 }
 
 // MARK: - Value Parsing Helper
@@ -803,9 +732,30 @@ private struct OfficialValueParser {
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.date(from: value)
     }
-    static func epochDate(seconds value: Any?) -> Date? {
-        guard let s = double(value) else { return nil }
-        return Date(timeIntervalSince1970: s)
+}
+
+/// Holds the most recent successfully refreshed credentials in memory, keyed by the
+/// refresh token that produced them. Keying on the *source* token means the cache
+/// self-invalidates when the user re-authenticates (the file's token changes) while
+/// still surviving normal token rotation, where the refreshed token differs from the
+/// one on disk.
+private final class ClaudeCredentialCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sourceRefreshToken: String?
+    private var cached: ClaudeCredentials?
+
+    func value(derivedFrom fileRefreshToken: String?) -> ClaudeCredentials? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard sourceRefreshToken == fileRefreshToken else { return nil }
+        return cached
+    }
+
+    func store(_ credentials: ClaudeCredentials, derivedFrom fileRefreshToken: String?) {
+        lock.lock()
+        sourceRefreshToken = fileRefreshToken
+        cached = credentials
+        lock.unlock()
     }
 }
 

@@ -10,6 +10,11 @@ final class StatusItemController {
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // macOS owns menu-bar ordering; an app can only ask it to *remember* where the
+        // user ⌘-dragged this item to. Without an autosave name there is nothing to
+        // remember, so every launch takes whatever slot the system hands out and the
+        // widget appears to wander along the menu bar.
+        statusItem.autosaveName = "QuotaBarStatusItem"
         statusItem.button?.title = "…"
     }
 

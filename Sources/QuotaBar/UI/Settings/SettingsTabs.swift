@@ -21,8 +21,8 @@ struct GeneralSettingsView: View {
             Section {
                 Toggle(isOn: autoUpdateBinding) {
                     SettingRowLabel(icon: "arrow.triangle.2.circlepath", color: .purple,
-                                    title: "Automatically check for updates",
-                                    subtitle: "Keep QuotaBar fresh with the latest features")
+                                    title: "Automatically install updates",
+                                    subtitle: "Check on launch, then download and install new versions in the background")
                 }
             } header: {
                 Text("Updates")

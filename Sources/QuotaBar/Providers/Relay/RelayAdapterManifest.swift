@@ -19,6 +19,10 @@ struct RelayAdapterManifest: Codable, Equatable, Sendable {
         var authHeader: String?
         var authScheme: String?
         var userIDHeader: String?
+        /// Header carrying the configured group id, for sites that scope a balance
+        /// lookup by group. Optional, so manifests written before this existed still
+        /// decode unchanged.
+        var groupIDHeader: String?
     }
     struct TokenRequest: Codable, Equatable, Sendable {
         var usagePath: String?

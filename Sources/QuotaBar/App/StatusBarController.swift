@@ -42,13 +42,25 @@ final class StatusBarController {
         }
     }
 
+    /// Sparkline width and the render signature both only ever look at the most recent
+    /// samples, so only those are materialized. Mapping the *whole* retained history
+    /// (up to a week per provider) allocated thousands of doubles on every observation
+    /// change — every poll, every settings edit — and threw them straight away.
+    private static let historyTailCount = 30
+
     private func renderStatusItem() {
         let entries = menuBarEntries()
         let dark = isMenuBarDark()
+        var history: [String: [Double]] = [:]
+        history.reserveCapacity(entries.count)
+        for entry in entries {
+            guard let samples = viewModel.usageHistory[entry.providerID] else { continue }
+            history[entry.providerID] = samples.suffix(Self.historyTailCount).map(\.remainingPercent)
+        }
         statusItem.render(
             entries: entries,
             style: viewModel.config.menuBarWidgetStyle,
-            history: viewModel.usageHistory.mapValues { $0.map(\.remainingPercent) },
+            history: history,
             appearanceDark: dark
         )
     }

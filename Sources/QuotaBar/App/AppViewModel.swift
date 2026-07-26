@@ -130,6 +130,11 @@ final class AppViewModel {
     private func performRefresh(id: String, force: Bool) async {
         guard let provider = providers[id],
               let descriptor = config.providers.first(where: { $0.id == id }) else { return }
+        // `testConnection` bypasses the scheduler's own in-flight set, so without this
+        // a "Test connection" tap during a scheduled poll would fire a second concurrent
+        // fetch — and whichever finished first would clear the shared spinner flag while
+        // the other was still running.
+        guard !refreshingProviderIDs.contains(id) else { return }
         refreshingProviderIDs.insert(id)
         defer { refreshingProviderIDs.remove(id) }
         do {
@@ -415,7 +420,7 @@ final class AppViewModel {
             }
         }
         let today = calendar.startOfDay(for: Date())
-        return (0..<days).reversed().map { offset in
+        return (0..<max(0, days)).reversed().map { offset in
             let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
             return DailyConsumption(day: day, consumedPoints: totals[day] ?? 0)
         }

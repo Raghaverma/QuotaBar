@@ -1,6 +1,5 @@
 import Foundation
 import QuotaBarDomain
-import QuotaBarProviders
 
 /// The contract every concrete provider implements — the seam the factory and
 /// scheduler talk to.
@@ -47,26 +46,5 @@ enum ProviderError: Error, LocalizedError {
         case .invalidResponse: return .endpointMisconfigured
         case .commandFailed, .timeout, .unavailable: return .unreachable
         }
-    }
-}
-
-/// Bridges the executable's rich `UsageProvider` to the Application layer's slim
-/// `UsageProviderFetching` contract so the scheduler depends only on the seam.
-struct UsageProviderFetchingAdapter: UsageProviderFetching {
-    private let provider: any UsageProvider
-    let providerID: UsageProviderIdentity
-
-    init(provider: any UsageProvider) {
-        self.provider = provider
-        self.providerID = UsageProviderIdentity(provider.descriptor.id)
-    }
-
-    func fetchUsageSnapshot(forceRefresh: Bool) async throws -> UsageQuotaSnapshot {
-        let snap = try await provider.fetch(forceRefresh: forceRefresh)
-        return UsageQuotaSnapshot(
-            used: snap.used ?? max(0, (snap.limit ?? 0) - (snap.remaining ?? 0)),
-            limit: snap.limit,
-            capturedAtUnixSeconds: snap.updatedAt.timeIntervalSince1970
-        )
     }
 }

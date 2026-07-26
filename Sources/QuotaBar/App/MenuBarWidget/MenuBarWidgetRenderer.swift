@@ -100,6 +100,14 @@ enum MenuBarWidgetRenderer {
         (s as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
     }
 
+    /// Gauge geometry must never be driven by an out-of-range percentage. Snapshot-level
+    /// percentages are clamped, but a provider-supplied `UsageQuotaWindow.remainingPercent`
+    /// is a raw stored value — an API reporting negative utilization yields >100, which
+    /// overflowed the bar past its rounded track and swept the ring more than a full turn.
+    private static func clampedFraction(_ percent: Double?) -> CGFloat {
+        CGFloat(min(max((percent ?? 0) / 100, 0), 1))
+    }
+
     private static func drawBar(percent: Double?, at x: CGFloat, color: NSColor, track: NSColor) {
         let barWidth: CGFloat = 5
         let barHeight: CGFloat = 13
@@ -107,7 +115,7 @@ enum MenuBarWidgetRenderer {
         let rect = NSRect(x: x + inset, y: (height - barHeight) / 2, width: barWidth, height: barHeight)
         let path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
         track.setFill(); path.fill()
-        let pct = CGFloat((percent ?? 0) / 100)
+        let pct = clampedFraction(percent)
         let fillRect = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * pct)
         let fillPath = NSBezierPath(roundedRect: fillRect, xRadius: 2, yRadius: 2)
         color.setFill(); fillPath.fill()
@@ -124,7 +132,7 @@ enum MenuBarWidgetRenderer {
         trackPath.lineWidth = line
         track.setStroke(); trackPath.stroke()
 
-        let pct = (percent ?? 0) / 100
+        let pct = clampedFraction(percent)
         let arc = NSBezierPath()
         arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - 360 * pct, clockwise: true)
         arc.lineWidth = line
@@ -137,7 +145,10 @@ enum MenuBarWidgetRenderer {
         if let current { points.append(current) }
         guard points.count >= 2 else {
             // Not enough history yet — draw a flat baseline at the current level.
-            let y = height * CGFloat((current ?? 0) / 100)
+            // `NSBezierPath.move(to:)` silently ignores a non-finite point, after which
+            // `line(to:)` raises "No current point for line" — an NSException, which is
+            // not catchable from Swift and takes the app down.
+            let y = height * clampedFraction(current)
             let line = NSBezierPath()
             line.move(to: NSPoint(x: x, y: y)); line.line(to: NSPoint(x: x + width, y: y))
             line.lineWidth = 1.5
@@ -151,7 +162,7 @@ enum MenuBarWidgetRenderer {
         var cgPoints: [CGPoint] = []
         for (i, value) in points.enumerated() {
             let px = x + stepX * CGFloat(i)
-            let py = vPad + usableH * CGFloat(min(max(value, 0), 100) / 100)
+            let py = vPad + usableH * clampedFraction(value)
             cgPoints.append(CGPoint(x: px, y: py))
         }
 

@@ -34,11 +34,6 @@ struct NotchGeometry: Equatable {
             ?? NSScreen.screens.first
     }
 
-    /// Re-find a screen previously resolved by `displayID`, tolerating reordering.
-    static func screen(forDisplayID id: CGDirectDisplayID) -> NSScreen? {
-        NSScreen.screens.first { $0.displayID == id }
-    }
-
     static func resolve(for screen: NSScreen?) -> NotchGeometry {
         guard let screen else {
             return NotchGeometry(
